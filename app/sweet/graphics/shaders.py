@@ -1,16 +1,21 @@
+from ..common import FileType, Draw
 import pygame as pg
 from pygame.locals import *
 from OpenGL.GL import *
 from OpenGL.GL.shaders import compileProgram, compileShader
 import numpy as np
 from pathlib import Path
+from math import sin, cos
+from sweet.camera import Camera
+from typing import Callable
+import uuid
 
 class ShaderHandler:
-    screen_size = (800, 600)
+    screen_size: tuple = (800, 600)
     _shader_files = {}
-    _occupated_textures = {}
-    _current_program = None
-    _uniform_mappings = {
+    _occupated_textures: dict[int] = {}
+    _current_program: str = None
+    _uniform_mappings: dict[Callable] = {
         "1i": glUniform1i,
         "2i": glUniform2i,
         "3i": glUniform3i,
@@ -29,38 +34,100 @@ class ShaderHandler:
     _SHADERS = _CWD / "app" / "shaders"
 
     @classmethod
-    def get_uniform_func(cls, data_type):
+    def affine_transform(cls, pos: tuple, scale: tuple, angle: int, static: bool) -> np.array:
+        c: float
+        s: float
+        c, s = cos(angle), sin(angle)
+
+        tx: float
+        ty: float
+        tx = pos[0] * 2 / cls.screen_size[0]
+        ty = pos[1] * 2 / cls.screen_size[1]
+
+        if not static:
+            main_cam = Camera.get_main_camera()
+            cam_pos = main_cam.get_pos()
+            cam_scale = main_cam.get_scale()
+            cam_angle = main_cam.get_angle()
+            cam_c, cam_s = cos(cam_angle), sin(cam_angle)
+            tx = (pos[0] - cam_pos[0]) * 2 / cls.screen_size[0]
+            ty = (pos[1] - cam_pos[1]) * 2 / cls.screen_size[1]
+
+            cam_rotation_z = np.array([
+                [ cam_c, -cam_s * (cls.screen_size[0] / cls.screen_size[1]), 0, 0],
+                [ cam_s,  cam_c * (cls.screen_size[0] / cls.screen_size[1]), 0, 0],
+                [ 0,  0, 1, 0],
+                [ 0,  0, 0, 1]
+            ], dtype=np.float32)
+
+            cam_scaling = np.array([
+                [cam_scale[1], 0, 0, 0],
+                [0, cam_scale[0] * cls.screen_size[1] / cls.screen_size[0], 0, 0],
+                [0, 0, 1, 0],
+                [0, 0, 0, 1]
+            ], dtype=np.float32)
+
+        rotation_z = np.array([
+            [ c, -s * (cls.screen_size[0] / cls.screen_size[1]), 0, 0],
+            [ s,  c * (cls.screen_size[0] / cls.screen_size[1]), 0, 0],
+            [ 0,  0, 1, 0],
+            [ 0,  0, 0, 1]
+        ], dtype=np.float32)
+
+        scaling = np.array([
+            [scale[0] * 2 / cls.screen_size[0], 0, 0, 0],
+            [0, scale[1] * 2 / cls.screen_size[0], 0, 0],
+            [0, 0, 1, 0],
+            [0, 0, 0, 1]
+        ], dtype=np.float32)
+
+        translation = np.array([
+            [1, 0, 0, 0],
+            [0, 1, 0, 0],
+            [0, 0, 1, 0],
+            [tx - 1, 1 - ty, 0, 1]
+        ], dtype=np.float32)
+
+        if static:
+            return scaling @ rotation_z @ translation
+
+        return scaling @ rotation_z @ translation @ cam_scaling @ cam_rotation_z
+    
+    @classmethod
+    def get_uniform_func(cls, data_type: str) -> Callable:
         return cls._uniform_mappings[data_type]
 
     @classmethod
-    def set_size(cls, size):
+    def set_size(cls, size: tuple) -> None:
         cls.screen_size = size
 
     @classmethod
-    def get_size(cls):
+    def get_size(cls) -> tuple:
         return cls.screen_size
     
     @classmethod
-    def generate_shader_programs(cls):
-        files = cls.get_shader_files()
+    def generate_shader_programs(cls) -> None:
+        files: dict[str, str] = cls.get_shader_files()
         for key in files:
+            vertex: str
+            fragment: str
             vertex, fragment = files[key]["vertex"], files[key]["fragment"]
             cls._shader_files[key]["program"] = cls.create_shader_program(vertex, fragment)
 
     @classmethod
-    def get_shader_files(cls):
+    def get_shader_files(cls) -> dict[str, str]:
         return cls._shader_files
 
     @classmethod
-    def get_shader_program(cls, name):
+    def get_shader_program(cls, name: str) -> Callable:
         return cls._shader_files[name]["program"]
 
     @classmethod
-    def set_default_file_path(cls, path):
+    def set_default_file_path(cls, path: str) -> None:
         cls._SHADERS = path
 
     @classmethod
-    def add_shader_file(cls, name):
+    def add_shader_file(cls, name: str) -> None:
         with open(cls._SHADERS / (name + ".vsh"), "r") as file:
             VERTEX_SHADER = file.read()
         with open(cls._SHADERS / (name + ".fsh"), "r") as file:
@@ -68,7 +135,7 @@ class ShaderHandler:
         cls._shader_files[name] = {"vertex": VERTEX_SHADER, "fragment": FRAGMENT_SHADER}
 
     @staticmethod
-    def create_shader_program(vertex, fragment):
+    def create_shader_program(vertex: str, fragment: str) -> Callable:
         shader = compileProgram(
             compileShader(vertex, GL_VERTEX_SHADER),
             compileShader(fragment, GL_FRAGMENT_SHADER)
@@ -76,31 +143,30 @@ class ShaderHandler:
         return shader
 
     @classmethod
-    def init_pygame_opengl(cls, flags):
+    def init_pygame_opengl(cls, flags: int, color: tuple) -> None:
         display = cls.screen_size
 
         pg.display.gl_set_attribute(pg.GL_MULTISAMPLEBUFFERS, 0)
         pg.display.gl_set_attribute(pg.GL_MULTISAMPLESAMPLES, 0)
 
         pg.display.gl_set_attribute(pg.GL_ALPHA_SIZE, 8)
-
         pg.display.set_mode(display, flags)
         pg.display.set_caption("test")
 
         glViewport(0, 0, display[0], display[1])
         glDisable(GL_MULTISAMPLE)
         
-        glClearColor(0.0, 0.0, 0.0, 0.0)
+        glClearColor(*map(lambda x: x / 255, color))
 
         glEnable(GL_BLEND)
         glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
 
     @classmethod
-    def set_mvp(cls, mvp):
+    def set_mvp(cls, mvp: np.array) -> None:
         cls.u_mvp_loc = mvp
 
     @classmethod
-    def set_shader(cls, shader, custom_mvp=None):
+    def set_shader(cls, shader: str, custom_mvp: np.array=None) -> None:
         shader_program = cls.get_shader_program(shader)
         glUseProgram(shader_program)
         cls._current_program = shader_program
@@ -109,11 +175,11 @@ class ShaderHandler:
         cls.set_mvp(mvp)
 
     @classmethod
-    def get_current_shader(cls):
+    def get_current_shader(cls) -> Callable:
         return cls._current_program
 
     @classmethod
-    def set_uniform_value(cls, uniform, data_type, *value):
+    def set_uniform_value(cls, uniform: str, data_type: str, *value: list) -> None:
         u = glGetUniformLocation(cls.get_current_shader(), uniform)
         func = cls.get_uniform_func(data_type)
         value = list(value)
@@ -121,20 +187,21 @@ class ShaderHandler:
         func(*params)
 
     @classmethod
-    def remove_texture(cls, occupation):
-        glDeleteTextures([cls._occupated_textures[occupation]["texture"]])
+    def remove_texture(cls, occupation: str) -> None:
+        glDeleteTextures([cls._occupated_textures[occupation]])
         cls._occupated_textures.pop(occupation)
 
     @staticmethod
-    def replace_texture(tex_id, texture, is_py_surf=False):
+    def replace_texture(tex_id: int, texture: Draw, save_type: FileType=FileType.PGSURF) -> int:
         glBindTexture(GL_TEXTURE_2D, tex_id)
-        if is_py_surf:
+
+        if save_type == FileType.PGSURF:
             image = pg.image.tostring(texture, "RGBA", True)
             width, height = texture.get_size()
-        else:
+        elif save_type == FileType.PILIMAGE:
             image = texture.tobytes("raw", "RGBA", 0, -1)
             width, height = texture.size
-
+        
         glTexImage2D(
             GL_TEXTURE_2D,
             0,
@@ -146,23 +213,29 @@ class ShaderHandler:
             image
         )
 
-        value = {"texture": tex_id, "width": width, "height": height}
-        return value
+        return tex_id
 
     @classmethod
-    def add_texture(cls, texture, is_py_surf=False, occupation=None):
-        if not occupation == None:
-            if not cls._occupated_textures.get(occupation) == None:
-                tex_value = cls._occupated_textures[occupation]
-                cls._occupated_textures[occupation] = cls.replace_texture(tex_value["texture"], texture, is_py_surf)
-                return cls._occupated_textures[occupation]
+    def add_texture(cls, texture, save_type=FileType.PGSURF, occupation: str=None) -> tuple:
+        if occupation == None:
+            occupation = uuid.uuid4().hex
+        if not cls._occupated_textures.get(occupation) == None:
+            tex_value = cls._occupated_textures[occupation]
+            tex_id = cls.replace_texture(tex_value, texture, save_type)
+            cls._occupated_textures[occupation] = tex_id
+            source_format = save_type
+            value = (tex_id, FileType.SHADERATLAS, texture, source_format, occupation)
+            return value
             
-        if is_py_surf:
+        source_format: FileType
+        if save_type == FileType.PGSURF:
             image = pg.image.tostring(texture, "RGBA", True)
             width, height = texture.get_size()
-        else:
+            source_format = FileType.PGSURF
+        elif save_type == FileType.PILIMAGE:
             image = texture.tobytes("raw", "RGBA", 0, -1)
             width, height = texture.size
+            source_format = FileType.PILIMAGE
 
         tex_id = glGenTextures(1)
         glBindTexture(GL_TEXTURE_2D, tex_id)
@@ -173,16 +246,12 @@ class ShaderHandler:
         glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0,
                     GL_RGBA, GL_UNSIGNED_BYTE, image)
 
-        value = {"texture": tex_id, "width": width, "height": height}
-
-        if not occupation == None:
-            if cls._occupated_textures.get(occupation) == None:
-                cls._occupated_textures[occupation] = value
-
+        cls._occupated_textures[occupation] = tex_id
+        value = (tex_id, FileType.SHADERATLAS, texture, source_format, occupation)
         return value
     
     @staticmethod
-    def setup_textured_quad():
+    def setup_textured_quad() -> list[int, int]:
         vertices = np.array([
             -0.5, -0.5, 0.0,   1, 1, 1,    0, 0,
             0.5, -0.5, 0.0,   1, 1, 1,    1, 0,
@@ -218,8 +287,8 @@ class ShaderHandler:
         return VAO, EBO
     
     @classmethod
-    def render(cls, mvp, texture, unit=GL_TEXTURE0):
+    def render(cls, mvp: np.array, texture: Draw, unit=GL_TEXTURE0) -> None:
         glUniformMatrix4fv(cls.u_mvp_loc, 1, GL_FALSE, mvp)
         glActiveTexture(unit)
-        glBindTexture(GL_TEXTURE_2D, texture["texture"])
+        glBindTexture(GL_TEXTURE_2D, texture.get_image())
         glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, None)

@@ -3,36 +3,36 @@ from pynput import keyboard
 import pyperclip
 
 class Input:
-    _keys = {121: [False] * 3}
-    _input = False
-    _focus = False
-    _mouse = {"0": [False] * 3, "1": [False] * 3, "2": [False] * 3}
-    mouse_scroll_x = 0
-    mouse_scroll_y = 0
+    _mouse_pos: tuple = (0, 0)
+    _keys: dict = {121: [False] * 3}
+    _input: bool = False
+    _focus: bool = False
+    _mouse: dict = {pg.BUTTON_LEFT: [False] * 3, pg.BUTTON_RIGHT: [False] * 3, pg.BUTTON_MIDDLE: [False] * 3}
+    mouse_scroll_x: int = 0
+    mouse_scroll_y: int = 0
 
     @classmethod
-    def set_caps(cls, value):
+    def set_caps(cls, value: bool) -> None:
         cls._caps = value
 
     @classmethod
-    def get_caps(cls):
+    def get_caps(cls) -> bool:
         return cls._caps
 
     @classmethod
-    def set_focus(cls, value):
+    def set_focus(cls, value: bool) -> None:
         cls._focus = value
 
     @classmethod
-    def get_focus(cls):
+    def get_focus(cls) -> bool:
         return cls._focus
 
     @classmethod
-    def set_keys(cls, *keys):
-        for key in keys:
-            cls._keys[key] = [False] * 3
+    def get_mouse_pos(cls) -> tuple:
+        return cls._mouse_pos
 
     @classmethod
-    def update(cls):
+    def update(cls) -> None:
         keys = pg.key.get_pressed()
         for inp in cls._keys:
             cls._keys[inp][0] = False
@@ -49,12 +49,14 @@ class Input:
 
                 cls._keys[inp][2] = False
 
+        cls._mouse_pos = pg.mouse.get_pos()
         buttons = pg.mouse.get_pressed()
+        
         for inp in cls._mouse:
             cls._mouse[inp][0] = False
             cls._mouse[inp][1] = False
 
-            if buttons[int(inp)]:
+            if buttons[int(inp) - 1]:
                 if not cls._mouse[inp][2]:
                     cls._mouse[inp][0] = True
 
@@ -66,32 +68,41 @@ class Input:
                 cls._mouse[inp][2] = False
 
     @classmethod
-    def get_keys(cls):
+    def get_keys(cls) -> dict:
         return cls._keys
     
     @classmethod
-    def get_pressed(cls, key):
+    def get_pressed(cls, key: int) -> bool:
+        if cls._keys.get(key) == None:
+            cls._keys[key] = [False] * 3
+            
         return cls._keys[key][0]
         
     @classmethod
-    def get_released(cls, key):
+    def get_released(cls, key: int) -> bool:
+        if cls._keys.get(key) == None:
+            cls._keys[key] = [False] * 3
+
         return cls._keys[key][1]
 
     @classmethod
-    def get_press(cls, key):
+    def get_press(cls, key: int) -> bool:
+        if cls._keys.get(key) == None:
+            cls._keys[key] = [False] * 3
+            
         return cls._keys[key][2]
 
     @classmethod
-    def mouse_pressed(cls, key):
-        return cls._mouse[str(key)][0]
+    def mouse_pressed(cls, key: int) -> bool:
+        return cls._mouse[key][0]
         
     @classmethod
-    def mouse_released(cls, key):
-        return cls._mouse[str(key)][1]
+    def mouse_released(cls, key: int) -> bool:
+        return cls._mouse[key][1]
 
     @classmethod
-    def mouse_press(cls, key):
-        return cls._mouse[str(key)][2]
+    def mouse_press(cls, key: int) -> bool:
+        return cls._mouse[key][2]
     
 class InputListener:
     pressed_modifiers = set()
