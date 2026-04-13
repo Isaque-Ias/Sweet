@@ -14,31 +14,45 @@ sw.looping.GameLoop.setup()
 
 SOURCES = Path.cwd() / "app" / "sources"
 
+sw.graphics.texture.Texture.set_texture("arma", SOURCES / "arma.png", sw.common.FileType.SHADERATLAS)
+sw.graphics.texture.Texture.set_texture("bala", SOURCES / "bala.png", sw.common.FileType.SHADERATLAS)
+
 sw.graphics.texture.Texture.set_texture("pexe", SOURCES / "pexe.png", sw.common.FileType.PILIMAGE)
 sw.graphics.texture.Texture.set_texture("grama", SOURCES / "grass.png", sw.common.FileType.PILIMAGE)
 curr_img = sw.graphics.texture.Texture.get_texture("grama")
-canva_img = curr_img.resize_canvas(curr_img.get_image(), curr_img.width * 20, curr_img.height) 
-curr_img.set_image(canva_img, sw.common.FileType.PILIMAGE)
-for i in range(20):
-    image = curr_img.paste_image(curr_img.get_image(), curr_img.get_image(), 97 * (i + 1), 0)
-    curr_img.set_image(image, sw.common.FileType.PILIMAGE)
-curr_img.convert(sw.common.FileType.SHADERATLAS)
-sw.graphics.texture.Texture.set_texture("ceu", SOURCES / "ceu.jpg", sw.common.FileType.PILIMAGE)
+canva_img = curr_img.resize_canvas(curr_img.get_image(), curr_img.width * 100, curr_img.height) 
+for i in range(100):
+    canva_img = canva_img.paste_image(canva_img.get_image(), curr_img.get_image(), 97 * (i + 1), 0)
+canva_img.set_occupation("grass_line")
+canva_img.convert(sw.common.FileType.SHADERATLAS)
+
+sw.graphics.texture.Texture.set_texture("ceu", SOURCES / "ceu.jpg", sw.common.FileType.SHADERATLAS)
 
 class UI(sw.entity.Entity):
     def __init__(self):
         super().__init__((0, 0), sw.graphics.texture.Texture.get_texture("ceu"), order=1)
-        self.image.convert(sw.common.FileType.SHADERATLAS)
 
     def draw(self):
         screen_size = Vec(*sw.entity.EntityTools.get_screen_size())
         cam_pos = Vec(*sw.camera.Camera.get_main_camera().get_pos())
         sw.entity.EntityTools.draw_image(self.image, (cam_pos + screen_size / 2).unp(), screen_size.unp(), 0)
 
+class Bullet(sw.entity.Entity):
+    def __init__(self, pos: tuple, vel: Vec) -> None:
+        super().__init__(pos, sw.graphics.texture.Texture.get_texture("bala"), layer=0, order=2, tick=True)
+        self.vel = vel
+
+    def tick(self):
+        self.pos += self.vel / 60
+
+    def draw(self):
+        sw.entity.EntityTools.draw_image(self.image, (self.pos).unp(), (10, 10 * self.image.height / self.image.width), self.vel.angle() + 90)
+
 class Peixe(sw.entity.Entity):
     def __init__(self):
         super().__init__((0, 0), sw.graphics.texture.Texture.get_texture("pexe"), layer=0, order=2, tick=True)
         self.image.convert(sw.common.FileType.SHADERATLAS)
+        self.arma = sw.graphics.texture.Texture.get_texture("arma")
         self.vel = Vec(0, 0)
         self.speed = 2
         self.size = 100
@@ -50,6 +64,7 @@ class Peixe(sw.entity.Entity):
         self.show_angle = 0
         self.jump_dir = 1
         self.sign = 0
+        self.gun_angle = 0
 
     def tick(self):
         screen_size = Vec(*sw.entity.EntityTools.get_screen_size())
@@ -86,11 +101,17 @@ class Peixe(sw.entity.Entity):
             self.animation_type = "jump"
             self.jump_dir = self.sign
             
-            self.vel.y = -12
+            self.vel.y = -18
 
-    def angle_add(self, curr, goal):
+        if Input.mouse_pressed(BUTTON_LEFT):
+            pos = (self.show_go + Vec(20 * self.sign, 10).rotate(self.gun_angle)).unp()
+            extra = 180 * (-self.sign / 2 + 0.5)
+            vel = Vec(cos((self.gun_angle + extra) * pi / 180), sin((self.gun_angle + extra) * pi / 180)) * 3000
+            Bullet(pos, vel)
+
+    def angle_add(self, curr, goal, fac=3):
         diff = ((goal % 360) - curr + 180) % 360 - 180
-        curr += diff / 3
+        curr += diff / fac
         curr = curr % 360
         return curr
 
@@ -100,7 +121,7 @@ class Peixe(sw.entity.Entity):
             self.show_angle = self.angle_add(self.show_angle, 0)
         if self.animation_type == "jump":
             self.show_go += (self.pos - self.show_go) / 3
-            self.show_angle = self.angle_add(self.show_angle, self.sign * self.animation_time * 12)
+            self.show_angle = self.angle_add(self.show_angle, self.sign * self.animation_time * 8.6)
             self.animation_time += 1
         if self.animation_type == "walk":
             loop = 20
@@ -108,16 +129,22 @@ class Peixe(sw.entity.Entity):
             animation_angle = 40 * cos(self.animation_time * pi / loop)
             self.show_go += ((self.pos + animation) - self.show_go) / 3
             self.show_angle = self.angle_add(self.show_angle, animation_angle)
-        
+
+        self.gun_angle = self.angle_add(self.gun_angle, self.show_angle, 10)
+
         sw.entity.EntityTools.draw_image(self.image, (self.show_go).unp(), (-150 * self.sign, 150 * self.image.height / self.image.width), self.show_angle)
+        sw.entity.EntityTools.draw_image(self.arma, (self.show_go + Vec(20 * self.sign, 10).rotate(self.gun_angle)).unp(), (-200 * self.sign, 200 * self.arma.height / self.arma.width), self.gun_angle)
 
 class Grass(sw.entity.Entity):
-    def __init__(self, pos, size):
-        super().__init__(pos, sw.graphics.texture.Texture.get_texture("grama"), layer=size, order=2)
+    def __init__(self, pos, size, layer="c"):
+        l = size
+        if not layer=="c":
+            l = layer
+        super().__init__(pos, sw.graphics.texture.Texture.get_texture("grass_line"), layer=l, order=2)
         self.size = size
 
     def draw(self):
-        sw.entity.EntityTools.draw_image(self.image, (self.pos + Vec(self.pos.x - peixe.pos.x, 0) * self.size).unp(), (2000 * self.size, 2000 * self.size * self.image.height / self.image.width), 0)
+        sw.entity.EntityTools.draw_image(self.image, (self.pos + Vec(self.pos.x - peixe.pos.x, 0) * (self.size - 1)).unp(), (10000 * self.size, 10000 * self.size * self.image.height / self.image.width), 0)
 
 UI()
 peixe = Peixe()
@@ -126,5 +153,6 @@ Grass((0, 50), 1)
 Grass((0, 50 * 2), 1.5)
 Grass((0, 50 * 2 ** 2), 2.25)
 Grass((0, 50 * 2 ** 3), 2.25 * 1.5)
+Grass((0, 50 / 2), 1 / 1.5, -1)
 
 sw.start()

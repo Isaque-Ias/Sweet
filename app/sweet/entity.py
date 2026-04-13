@@ -1,12 +1,11 @@
 from .graphics.shaders import ShaderHandler
-from .graphics.texture import Texture
+from .graphics.texture import Texture, Imaging
 from .camera import Camera, Cam
 from OpenGL.GL import *
 import pygame as pg
 from .common import TextureData
 from .linalg.vector import Vec
 import numpy as np
-from .graphics.imaging import Imaging
 from math import pi
 
 class EntityTools:
@@ -102,8 +101,8 @@ class Entity:
         self.angle = angle
         self.layer = int(layer)
         self.order = order
-        EntityManager.create_entity(self, order, pre_tick, tick, pos_tick)
-        
+        EntityManager.agend_entity(self, order, pre_tick, tick, pos_tick)
+            
     def set_layer(self, layer: int) -> None:
         layer = int(layer)
         if not self.layer == layer:
@@ -152,6 +151,7 @@ class EntityManager:
 
     _layer_changes: dict[Entity, int] = {}
     _order_changes: dict[Entity, int] = {}
+    _entity_changes: dict[Entity] = {}
     _ticks: dict[list[Entity]] = {}
     _id: int = 0
 
@@ -180,11 +180,22 @@ class EntityManager:
         return cls._order_changes
 
     @classmethod
+    def get_entity_changes(cls) -> dict[Entity, int]:
+        return cls._entity_changes
+
+    @classmethod
     def set_layer_change(cls, entity: Entity, layer: int) -> None:
         if hasattr(entity, "_id"):
             cls.remove_entity_layer(entity)
         entity.layer = layer
         cls.add_entity_layer(entity)
+
+    @classmethod
+    def set_order_change(cls, entity: Entity, order: int) -> None:
+        if hasattr(entity, "_id"):
+            cls.remove_entity_order(entity)
+        entity.order = order
+        cls.add_entity_order(entity)
 
     @classmethod
     def agend_layer_change(cls, entity: Entity, layer: int) -> None:
@@ -193,6 +204,16 @@ class EntityManager:
     @classmethod
     def agend_order_change(cls, entity: Entity, order: int) -> None:
         cls._order_changes[entity._id] = [entity, order]
+
+    @classmethod
+    def agend_entity(cls, entity, order, pre_tick, tick, pos_tick):
+        cls._entity_changes[entity] = [entity, order, pre_tick, tick, pos_tick]
+
+    @classmethod
+    def clear_agend(cls):
+        cls._entity_changes = {}
+        cls._order_changes = {}
+        cls._layer_changes = {}
 
     @classmethod
     def create_entity(cls, entity: Entity, order: int, pre_tick: bool, tick: bool, pos_tick: bool) -> None:
@@ -270,7 +291,6 @@ class EntityManager:
             del cls._entities[order][layer]
 
             if not cls._content_layers[order]:
-                print(cls._content_layers, order)
                 cls._content_layers.pop(order)
                 cls._content_orders.remove(order)
 
@@ -296,3 +316,4 @@ class EntityManager:
     @classmethod
     def get_content_layers(cls, order: int) -> list[int]:
         return cls._content_layers[order]
+    

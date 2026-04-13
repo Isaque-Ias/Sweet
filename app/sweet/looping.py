@@ -155,6 +155,12 @@ class GameLoop:
             layer_changes: list = EntityManager.get_layer_changes()
             for key in layer_changes:
                 EntityManager.set_layer_change(*layer_changes[key])
+
+            entity_changes: list = EntityManager.get_entity_changes()
+            for key in entity_changes:
+                EntityManager.create_entity(*entity_changes[key])
+
+            EntityManager.clear_agend()
         
             Input.mouse_scroll_x = 0
             Input.mouse_scroll_y = 0
