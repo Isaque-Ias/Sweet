@@ -4,7 +4,7 @@ import os
 from .graphics.shaders import ShaderHandler
 from .graphics.texture import Texture
 from OpenGL.GL import *
-from .entity import EntityManager
+from .entity import EntityManager, EntityTools
 from .inputting import Input
 from .testing import Testing
 from pathlib import Path
@@ -104,8 +104,8 @@ class GameLoop:
         Texture.set_texture("pixel", Path.cwd() / "app" / "sources" / "build" / "pixel.png")
         ShaderHandler.set_size(cls.get_screen_size())
         ShaderHandler.init_pygame_opengl(cls.get_flags(), cls._color)
-        ShaderHandler.generate_shader_programs()
         ShaderHandler.setup_textured_quad()
+        ShaderHandler.generate_shader_programs()
         cls._built = True
 
     @classmethod
@@ -147,6 +147,9 @@ class GameLoop:
                 for layer in content_layers:
                     for entity in entities[order][layer]:
                         entity.draw()
+
+            ShaderHandler.render_all()
+            EntityTools._z = 0
                         
             order_changes: list = EntityManager.get_order_changes()
             for key in order_changes:

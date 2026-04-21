@@ -7,6 +7,9 @@ import pygame as pg
 from pathlib import Path
 from sweet.linalg.vector import Vec
 from sweet.inputting import Input
+from OpenGL.GL import *
+from PIL import Image
+from sweet.graphics.texture import Imaging
 
 sw.looping.GameLoop.set_screen_size((1300, 700))
 sw.looping.GameLoop.set_resizable(True)
@@ -14,13 +17,90 @@ sw.looping.GameLoop.setup()
 
 SOURCES = Path.cwd() / "app" / "sources"
 
-sw.graphics.texture.Texture.set_texture("arma", SOURCES / "arma.png", sw.common.FileType.SHADERATLAS)
-sw.graphics.texture.Texture.set_texture("bala", SOURCES / "bala.png", sw.common.FileType.SHADERATLAS)
+sw.graphics.texture.Texture.set_texture("a", SOURCES / "gef.gif")
 
-sw.graphics.texture.Texture.set_texture("pexe", SOURCES / "pexe.png", sw.common.FileType.PILIMAGE)
-sw.graphics.texture.Texture.set_texture("grama", SOURCES / "grass.png", sw.common.FileType.PILIMAGE)
-curr_img = sw.graphics.texture.Texture.get_texture("grama")
-canva_img = curr_img.resize_canvas(curr_img.get_image(), curr_img.width * 100, curr_img.height) 
+sw.graphics.texture.Texture.set_texture("arma", SOURCES / "arma.png")
+sw.graphics.texture.Texture.set_texture("bala", SOURCES / "bala.png")
+
+sw.graphics.texture.Texture.set_texture("pexe", SOURCES / "pexe.png")
+sw.graphics.texture.Texture.set_texture("grama", SOURCES / "grass.png")
+sw.graphics.texture.Texture.set_texture("ceu", SOURCES / "ceu.jpg")
+
+a = sw.graphics.texture.Texture.get_texture("ceu")
+a.upload()
+b = sw.graphics.texture.Texture.get_texture("bala")
+b.upload()
+gif = sw.graphics.texture.Texture.get_texture("a")
+gif.upload()
+c = sw.graphics.texture.Texture.get_texture("pexe")
+c.upload()
+
+global cam
+cam = sw.camera.Camera.get_main_camera()
+cam.set_scale((1, 1))
+
+class Ka(sw.entity.Entity):
+    def __init__(self):
+        super().__init__((0, 0), image = c, order = 1, tick=True)
+        self.cam_scal = Vec(1, 1)
+
+    def tick(self):
+        screen_size = Vec(*sw.entity.EntityTools.get_screen_size())
+        if sw.inputting.Input.get_press(K_w):
+            self.pos.y -= 5
+        if sw.inputting.Input.get_press(K_s):
+            self.pos.y += 5
+        if sw.inputting.Input.get_press(K_a):
+            self.pos.x -= 5
+        if sw.inputting.Input.get_press(K_d):
+            self.pos.x += 5
+
+        if sw.inputting.Input.get_press(K_o):
+            self.cam_scal = self.cam_scal * 1.1
+            cam.set_scale(self.cam_scal.unp())
+
+        if sw.inputting.Input.get_press(K_p):
+            self.cam_scal = self.cam_scal / 1.1
+            cam.set_scale(self.cam_scal.unp())
+
+        if sw.inputting.Input.get_press(K_k):
+            cam.set_angle(cam.get_angle() + 5)
+
+        if sw.inputting.Input.get_press(K_l):
+            cam.set_angle(cam.get_angle() - 5)
+
+        cam.set_pos((self.pos - screen_size * cam.get_scale()[0]/ 2).unp())
+
+    def draw(self):
+        for i in range(-10, 10):
+            for j in range(-10, 10):
+                sw.entity.EntityTools.draw_image(self.image, (self.pos + Vec(i * 10, j * 10)).unp(), (10, 10), self.pos.x / 10)
+        sw.entity.EntityTools.draw_image(self.image, (self.pos).unp(), (10, 10), self.pos.x / 10, static=True)
+
+class Ceu(sw.entity.Entity):
+    def __init__(self):
+        super().__init__((0, 0), image = a, order=0, tick=True)
+        self.gif = sw.graphics.texture.Texture.get_texture("a")
+        self.time = 0
+
+    def tick(self):
+        self.time += 1
+        if self.time > 0 and self.gif._current_frame < 190:
+            self.gif.next_frame()
+            self.time = 0
+
+    def draw(self):
+        screen_size = Vec(*sw.entity.EntityTools.get_screen_size())
+        sw.entity.EntityTools.draw_image(self.image, (screen_size/2).unp(), screen_size.unp())
+
+        sw.entity.EntityTools.draw_image(self.gif, (screen_size/2).unp(), (screen_size / 2).unp())
+
+Ceu()
+Ka()
+sw.start()
+
+# curr_img = sw.graphics.texture.Texture.get_texture("grama")
+"""canva_img = curr_img.resize_canvas(curr_img.get_image(), curr_img.width * 100, curr_img.height) 
 for i in range(100):
     canva_img = canva_img.paste_image(canva_img.get_image(), curr_img.get_image(), 97 * (i + 1), 0)
 canva_img.set_occupation("grass_line")
@@ -155,4 +235,4 @@ Grass((0, 50 * 2 ** 2), 2.25)
 Grass((0, 50 * 2 ** 3), 2.25 * 1.5)
 Grass((0, 50 / 2), 1 / 1.5, -1)
 
-sw.start()
+sw.start()"""

@@ -3,14 +3,28 @@ from .graphics.texture import Texture, Imaging
 from .camera import Camera, Cam
 from OpenGL.GL import *
 import pygame as pg
-from .common import TextureData
+from .common import TextureData, FileType
 from .linalg.vector import Vec
 import numpy as np
 from math import pi
+from PIL import Image
+from dataclasses import dataclass
+
+@dataclass
+class Sprite:
+    pos: tuple
+    scale: tuple
+    layer: int
+    rotation: float
+    uv: tuple
+    tex_id: int
+    static: bool
+    unit: int
 
 class EntityTools:
     ShaderHandler.add_shader_file("def")
     _font: pg.font = None
+    _z = 0
 
     @staticmethod
     def get_cam(cam: str) -> Cam:
@@ -51,8 +65,9 @@ class EntityTools:
             ShaderHandler.set_shader(program)
 
         ShaderHandler.set_uniform_value("u_color", "4f", *map(lambda x: x / 255, color), alpha)
-        mvp: np.array = ShaderHandler.affine_transform(pos, scale, angle * pi / 180, static)
-        ShaderHandler.render(mvp, image, unit)
+        sprite = Sprite(pos, scale, cls._z, angle, image.uv.uv, image.get_tex_id(), static, unit)
+        cls._z += 1
+        ShaderHandler.render_add(sprite)
 
     @classmethod
     def set_font(cls, font: pg.font) -> None:
@@ -75,7 +90,11 @@ class EntityTools:
         font_surf: pg.Surface = cls.get_font().render(text, True, (255, 255, 255))
         width: int
         height: int
-        image.set_image(font_surf)
+
+        data = pg.image.tostring(font_surf, "RGBA", True)
+        size = font_surf.get_size()
+        ShaderHandler.replace_texture(ShaderHandler.get_image(), Image.frombytes("RGBA", size, data))
+
         width, height = (image.width, image.height)
         cls.draw_image(image,
                        (pos[0] + width * scale[0] * align[0] / 2, pos[1] + height * scale[1] * align[1] / 2),
