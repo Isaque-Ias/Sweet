@@ -104,7 +104,6 @@ class GameLoop:
         Texture.set_texture("pixel", Path.cwd() / "app" / "sources" / "build" / "pixel.png")
         ShaderHandler.set_size(cls.get_screen_size())
         ShaderHandler.init_pygame_opengl(cls.get_flags(), cls._color)
-        ShaderHandler.setup_textured_quad()
         ShaderHandler.generate_shader_programs()
         cls._built = True
 

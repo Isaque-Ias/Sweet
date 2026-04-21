@@ -296,10 +296,18 @@ class ShaderHandler:
             fragment: str
             vertex, fragment = files[key]["vertex"], files[key]["fragment"]
             cls._shader_files[key]["program"] = cls.create_shader_program(vertex, fragment)
+            vao, vbo, stride = cls.create_vao(cls._shader_files[key]["layout"])
+            cls._shader_files[key]["vao"] = vao
+            cls._shader_files[key]["vbo"] = vbo
+            cls._shader_files[key]["stride_size"] = stride
 
     @classmethod
     def get_shader_files(cls) -> dict[str, str]:
         return cls._shader_files
+
+    @classmethod
+    def get_shader_file(cls, name: str) -> dict[str, str]:
+        return cls._shader_files[name]
 
     @classmethod
     def get_shader_program(cls, name: str) -> Callable:
@@ -310,12 +318,13 @@ class ShaderHandler:
         cls._SHADERS = path
 
     @classmethod
-    def add_shader_file(cls, name: str) -> None:
+    def add_shader_file(cls, name: str, layout: dict) -> None:
         with open(cls._SHADERS / (name + ".vsh"), "r") as file:
             VERTEX_SHADER = file.read()
         with open(cls._SHADERS / (name + ".fsh"), "r") as file:
             FRAGMENT_SHADER = file.read()
         cls._shader_files[name] = {"vertex": VERTEX_SHADER, "fragment": FRAGMENT_SHADER}
+        cls._shader_files[name]["layout"] = layout
 
     @staticmethod
     def create_shader_program(vertex: str, fragment: str) -> Callable:
@@ -346,6 +355,63 @@ class ShaderHandler:
         glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
         glPixelStorei(GL_UNPACK_ALIGNMENT, 1)
 
+    def create_vao(layout: dict) -> object:
+        vertices = np.array([
+            -0.5, -0.5, 0.0,   1, 1, 1,    0, 0,
+             0.5, -0.5, 0.0,   1, 1, 1,    1, 0,
+             0.5,  0.5, 0.0,   1, 1, 1,    1, 1,
+            -0.5,  0.5, 0.0,   1, 1, 1,    0, 1,
+        ], dtype=np.float32)
+
+        indices = np.array([
+            0, 1, 2,
+            2, 3, 0
+        ], dtype=np.uint32)
+
+        vao = glGenVertexArrays(1)
+        vbo = glGenBuffers(1)
+        instance_vbo = glGenBuffers(1)
+        ebo = glGenBuffers(1)
+
+        glBindVertexArray(vao)
+
+        glBindBuffer(GL_ARRAY_BUFFER, vbo)
+        glBufferData(GL_ARRAY_BUFFER, vertices.nbytes, vertices, GL_STATIC_DRAW)
+
+        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ebo)
+        glBufferData(GL_ELEMENT_ARRAY_BUFFER, indices.nbytes, indices, GL_STATIC_DRAW)
+
+        stride = 8 * vertices.itemsize
+
+        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, stride, ctypes.c_void_p(0))
+        glEnableVertexAttribArray(0)
+
+        glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, stride, ctypes.c_void_p(12))
+        glEnableVertexAttribArray(1)
+
+        glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, stride, ctypes.c_void_p(24))
+        glEnableVertexAttribArray(2)
+
+        glBindBuffer(GL_ARRAY_BUFFER, instance_vbo)
+
+        stride = sum(size for _, size in layout) * 4
+        offset = 0
+
+        MAX_SPRITES = 50000
+        FLOATS_PER_INSTANCE = stride
+        glBufferData(GL_ARRAY_BUFFER, MAX_SPRITES * FLOATS_PER_INSTANCE * 4, None, GL_DYNAMIC_DRAW)
+
+        for i, (name, size) in enumerate(layout, start=3):
+            glVertexAttribPointer(i, size, GL_FLOAT, GL_FALSE, stride, ctypes.c_void_p(offset))
+            glEnableVertexAttribArray(i)
+            glVertexAttribDivisor(i, 1)
+
+            offset += size * 4
+
+        glBindVertexArray(0)
+
+        return vao, instance_vbo, stride // 4
+
     @classmethod
     def setup_textured_quad(cls) -> list[int, int]:
         vertices = np.array([
@@ -360,18 +426,17 @@ class ShaderHandler:
             2, 3, 0
         ], dtype=np.uint32)
 
-        cls.instance_vbo = glGenBuffers(1)
-        cls.VAO = glGenVertexArrays(1)
-        cls.VBO = glGenBuffers(1)
-        cls.EBO = glGenBuffers(1)
+        instance_vbo = glGenBuffers(1)
+        VAO = glGenVertexArrays(1)
+        VBO = glGenBuffers(1)
+        EBO = glGenBuffers(1)
 
-        glBindVertexArray(cls.VAO)
+        glBindVertexArray(VAO)
 
-
-        glBindBuffer(GL_ARRAY_BUFFER, cls.VBO)
+        glBindBuffer(GL_ARRAY_BUFFER, VBO)
         glBufferData(GL_ARRAY_BUFFER, vertices.nbytes, vertices, GL_STATIC_DRAW)
 
-        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, cls.EBO)
+        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, EBO)
         glBufferData(GL_ELEMENT_ARRAY_BUFFER, indices.nbytes, indices, GL_STATIC_DRAW)
 
         stride = 8 * vertices.itemsize
@@ -385,7 +450,7 @@ class ShaderHandler:
         glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, stride, ctypes.c_void_p(24))
         glEnableVertexAttribArray(2)
 
-        glBindBuffer(GL_ARRAY_BUFFER, cls.instance_vbo)
+        glBindBuffer(GL_ARRAY_BUFFER, instance_vbo)
 
         MAX_SPRITES = 50000
         FLOATS_PER_INSTANCE = 10
@@ -413,14 +478,17 @@ class ShaderHandler:
         glEnableVertexAttribArray(7)
         glVertexAttribDivisor(7, 1)
 
-        return cls.VAO, cls.EBO, cls.instance_vbo
-
     @classmethod
     def set_shader(cls, shader: str) -> None:
         shader_program = cls.get_shader_program(shader)
         glUseProgram(shader_program)
         cls._current_program = shader_program
         cls.u_mvp_loc = glGetUniformLocation(shader_program, "u_mvp")
+
+        shader_file = cls.get_shader_file(shader)
+        cls.instance_vbo = shader_file["vbo"]
+        cls.vao = shader_file["vao"]
+        cls.stride_size = shader_file["stride_size"]
         
     @classmethod
     def get_current_shader(cls) -> Callable:
@@ -663,8 +731,6 @@ class ShaderHandler:
 
     @classmethod
     def render(cls, mvp: np.array, texture: Draw, data: np.array, unit=GL_TEXTURE0) -> None:
-        glUseProgram(cls.get_current_shader())
-        
         glUniformMatrix4fv(cls.u_mvp_loc, 1, GL_TRUE, mvp)
         
         glBindBuffer(GL_ARRAY_BUFFER, cls.instance_vbo)
@@ -673,9 +739,9 @@ class ShaderHandler:
         glActiveTexture(unit)
         glBindTexture(GL_TEXTURE_2D, texture)
 
-        instance_count = len(data) // 10
+        instance_count = len(data) // cls.stride_size
 
-        glBindVertexArray(cls.VAO)
+        glBindVertexArray(cls.vao)
         
         glDrawElementsInstanced(GL_TRIANGLES, 6, GL_UNSIGNED_INT, None, instance_count)
 
@@ -691,9 +757,15 @@ class ShaderHandler:
         batch = []
         last_id = float("-inf")
         last_unit = float("-inf")
+        last_program = "def"
 
-        for sprite in cls._render_list:    
-            same_batch = sprite.tex_id == last_id and sprite.unit == last_unit
+        for sprite in cls._render_list:
+            same_program = True
+            if not sprite.program == None and not sprite.program == last_program:
+                same_program = False
+                cls.set_shader(sprite.program)
+
+            same_batch = sprite.tex_id == last_id and sprite.unit == last_unit and same_program
             if not same_batch and batch:
                     data = cls.build_instance_buffer(batch, view, cam_scale, cam_angle)
                     cls.render(mvp, last_id, data, last_unit)
@@ -702,6 +774,8 @@ class ShaderHandler:
             batch.append(sprite)
             last_id = sprite.tex_id
             last_unit = sprite.unit
+            if not sprite.program == None:
+                last_program = sprite.program
 
         if batch:
             data = cls.build_instance_buffer(batch, view, cam_scale, cam_angle)
@@ -716,6 +790,7 @@ class ShaderHandler:
         for s in sprites:
             x, y = s.pos
             w, h = s.scale
+            rotation = s.rotation
 
             if not s.static:
                 pos = np.array([x, y, 0.0, 1.0], dtype=np.float32)
@@ -724,9 +799,10 @@ class ShaderHandler:
 
                 w /= cam_scale[0]
                 h /= cam_scale[1]
+                rotation -= cam_angle
 
-            cos_r = cos(radians(s.rotation - cam_angle))
-            sin_r = sin(radians(s.rotation - cam_angle))
+            cos_r = cos(radians(rotation))
+            sin_r = sin(radians(rotation))
 
             u0 = s.uv.x / cls._atlas_size
             v0 = s.uv.y / cls._atlas_size
@@ -738,7 +814,8 @@ class ShaderHandler:
                 w, h,
                 cos_r, sin_r,
                 u0, v0,
-                us, vs
+                us, vs,
             ])
+            data.extend(s.overhead)
 
         return np.array(data, dtype=np.float32)

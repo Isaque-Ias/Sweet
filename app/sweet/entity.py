@@ -1,5 +1,5 @@
 from .graphics.shaders import ShaderHandler
-from .graphics.texture import Texture, Imaging
+from .graphics.texture import Texture, Imaging, Video
 from .camera import Camera, Cam
 from OpenGL.GL import *
 import pygame as pg
@@ -19,10 +19,20 @@ class Sprite:
     uv: tuple
     tex_id: int
     static: bool
+    program: bool
     unit: int
+    overhead: list
 
 class EntityTools:
-    ShaderHandler.add_shader_file("def")
+    ShaderHandler.add_shader_file("def", layout = [
+        ("iPos", 2),
+        ("iScale", 2),
+        ("iRot", 2),
+        ("iUVOff", 2),
+        ("iUVScale", 2),
+        ("iRgb", 3),
+        ("iAlpha", 1),
+    ])
     _font: pg.font = None
     _z = 0
 
@@ -52,7 +62,7 @@ class EntityTools:
 
     @classmethod
     def draw_image(cls,
-                   image: Imaging,
+                   image: Imaging | Video,
                    pos: tuple,
                    scale: tuple,
                    angle: float=0,
@@ -61,11 +71,9 @@ class EntityTools:
                    static: bool=False,
                    program: str=None,
                    unit=GL_TEXTURE0) -> None:
-        if not program == None:
-            ShaderHandler.set_shader(program)
 
-        ShaderHandler.set_uniform_value("u_color", "4f", *map(lambda x: x / 255, color), alpha)
-        sprite = Sprite(pos, scale, cls._z, angle, image.uv.uv, image.get_tex_id(), static, unit)
+        color = (color[0] / 255, color[1] / 255, color[2] / 255)
+        sprite = Sprite(pos, scale, cls._z, angle, image.uv.uv, image.get_tex_id(), static, program, unit, [*color, alpha])
         cls._z += 1
         ShaderHandler.render_add(sprite)
 
@@ -79,29 +87,37 @@ class EntityTools:
 
     @classmethod
     def draw_text(cls,
+                  image: Imaging,
                   text: str,
                   pos: tuple,
-                  image: Imaging,
                   scale: tuple,
+                  angle: float=0,
                   color: tuple=(255, 255, 255),
                   alpha: float=1,
                   static: bool=True,
-                  align: tuple=(0, 0)) -> TextureData:
+                  align: tuple=(0, 0),
+                  program: str=None,
+                   unit=GL_TEXTURE0) -> None:
         font_surf: pg.Surface = cls.get_font().render(text, True, (255, 255, 255))
         width: int
         height: int
 
         data = pg.image.tostring(font_surf, "RGBA", True)
         size = font_surf.get_size()
-        ShaderHandler.replace_texture(ShaderHandler.get_image(), Image.frombytes("RGBA", size, data))
+        new_image = Image.frombytes("RGBA", size, data)
+        image.set_image(new_image)
+        image.upload()
 
         width, height = (image.width, image.height)
         cls.draw_image(image,
                        (pos[0] + width * scale[0] * align[0] / 2, pos[1] + height * scale[1] * align[1] / 2),
                        (width * scale[0], height * scale[1]),
+                       angle=angle,
                        color=color,
                        alpha=alpha,
-                       static=static)
+                       static=static,
+                       program=program,
+                       unit=unit)
 
 class Entity:
     def __init__(self,

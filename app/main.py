@@ -74,7 +74,8 @@ class Ka(sw.entity.Entity):
     def draw(self):
         for i in range(-10, 10):
             for j in range(-10, 10):
-                sw.entity.EntityTools.draw_image(self.image, (self.pos + Vec(i * 10, j * 10)).unp(), (10, 10), self.pos.x / 10)
+                col = (25 * i, 0, 0)
+                sw.entity.EntityTools.draw_image(self.image, (self.pos + Vec(i * 10, j * 10)).unp(), (10, 10), self.pos.x / 10, color=col)
         sw.entity.EntityTools.draw_image(self.image, (self.pos).unp(), (10, 10), self.pos.x / 10, static=True)
 
 class Ceu(sw.entity.Entity):

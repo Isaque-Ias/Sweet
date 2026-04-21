@@ -8,11 +8,15 @@ layout(location = 4) in vec2 iScale;
 layout(location = 5) in vec2 iRot;
 layout(location = 6) in vec2 iUVOff;
 layout(location = 7) in vec2 iUVScale;
+layout(location = 8) in vec3 iRgb;
+layout(location = 9) in float iAlpha;
 
 uniform mat4 u_mvp;
 
 out vec3 v_color;
 out vec2 v_texcoord;
+out vec3 v_rgb;
+out float v_alpha;
 
 void main()
 {
@@ -31,4 +35,6 @@ void main()
     v_texcoord = a_texcoord * iUVScale + iUVOff;
 
     v_texcoord.y = v_texcoord.y;
+    v_rgb = iRgb;
+    v_alpha = iAlpha;
 }
