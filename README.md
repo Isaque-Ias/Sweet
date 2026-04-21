@@ -1,5 +1,5 @@
 # Sweet
-Jogo em Python de sobrevivência e conquista de uma ilha misteriosa com uma maldade crescente...
+Módulo de auxílio em construção de games
 
 # Como jogar
 ## Requisitos
