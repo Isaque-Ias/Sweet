@@ -1,4 +1,4 @@
-from ..common import Draw, ConvertType, Rec, UVLocation
+from ..common import Draw, ConvertType, Rec, UVLocation, ShaderData
 import pygame as pg
 from pygame.locals import *
 from OpenGL.GL import *
@@ -174,7 +174,7 @@ class Atlas:
 
 class ShaderHandler:
     screen_size: tuple = (800, 600)
-    _shader_files = {}
+    _shader_files: dict[ShaderData] = {}
     _occupated_textures: dict[int] = {}
     _current_program: str = None
     _uniform_mappings: dict[Callable] = {
@@ -294,12 +294,13 @@ class ShaderHandler:
         for key in files:
             vertex: str
             fragment: str
-            vertex, fragment = files[key]["vertex"], files[key]["fragment"]
-            cls._shader_files[key]["program"] = cls.create_shader_program(vertex, fragment)
-            vao, vbo, stride = cls.create_vao(cls._shader_files[key]["layout"])
-            cls._shader_files[key]["vao"] = vao
-            cls._shader_files[key]["vbo"] = vbo
-            cls._shader_files[key]["stride_size"] = stride
+            vertex, fragment = files[key].vertex, files[key].fragment
+            cls._shader_files[key].program = cls.create_shader_program(vertex, fragment)
+            vao, vbo, ssbo, stride = cls.create_vao(cls._shader_files[key].layout)
+            cls._shader_files[key].vao = vao
+            cls._shader_files[key].vbo = vbo
+            cls._shader_files[key].ssbo = ssbo
+            cls._shader_files[key].stride_size = stride
 
     @classmethod
     def get_shader_files(cls) -> dict[str, str]:
@@ -311,7 +312,7 @@ class ShaderHandler:
 
     @classmethod
     def get_shader_program(cls, name: str) -> Callable:
-        return cls._shader_files[name]["program"]
+        return cls._shader_files[name].program
 
     @classmethod
     def set_default_file_path(cls, path: str) -> None:
@@ -323,8 +324,7 @@ class ShaderHandler:
             VERTEX_SHADER = file.read()
         with open(cls._SHADERS / (name + ".fsh"), "r") as file:
             FRAGMENT_SHADER = file.read()
-        cls._shader_files[name] = {"vertex": VERTEX_SHADER, "fragment": FRAGMENT_SHADER}
-        cls._shader_files[name]["layout"] = layout
+        cls._shader_files[name] = ShaderData(layout=layout, vertex=VERTEX_SHADER, fragment=FRAGMENT_SHADER)
 
     @staticmethod
     def create_shader_program(vertex: str, fragment: str) -> Callable:
@@ -355,6 +355,7 @@ class ShaderHandler:
         glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
         glPixelStorei(GL_UNPACK_ALIGNMENT, 1)
 
+    @staticmethod
     def create_vao(layout: dict) -> object:
         vertices = np.array([
             -0.5, -0.5, 0.0,   1, 1, 1,    0, 0,
@@ -372,6 +373,23 @@ class ShaderHandler:
         vbo = glGenBuffers(1)
         instance_vbo = glGenBuffers(1)
         ebo = glGenBuffers(1)
+        ssbo = None
+
+        MAX_SPRITES = 50000
+
+        if layout.get("ssbo"):
+            ssbo = glGenBuffers(1)
+            glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssbo)
+
+            MAX_BYTES = 50
+
+            glBufferData(
+                GL_SHADER_STORAGE_BUFFER,
+                MAX_SPRITES * MAX_BYTES,
+                None,
+                GL_DYNAMIC_DRAW
+            )
+            glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, ssbo)
 
         glBindVertexArray(vao)
 
@@ -393,15 +411,13 @@ class ShaderHandler:
         glEnableVertexAttribArray(2)
 
         glBindBuffer(GL_ARRAY_BUFFER, instance_vbo)
-
-        stride = sum(size for _, size in layout) * 4
+        stride = sum(size for _, size in layout["vao"]) * 4
         offset = 0
 
-        MAX_SPRITES = 50000
         FLOATS_PER_INSTANCE = stride
         glBufferData(GL_ARRAY_BUFFER, MAX_SPRITES * FLOATS_PER_INSTANCE * 4, None, GL_DYNAMIC_DRAW)
 
-        for i, (name, size) in enumerate(layout, start=3):
+        for i, (name, size) in enumerate(layout["vao"], start=3):
             glVertexAttribPointer(i, size, GL_FLOAT, GL_FALSE, stride, ctypes.c_void_p(offset))
             glEnableVertexAttribArray(i)
             glVertexAttribDivisor(i, 1)
@@ -410,7 +426,7 @@ class ShaderHandler:
 
         glBindVertexArray(0)
 
-        return vao, instance_vbo, stride // 4
+        return vao, instance_vbo, ssbo, stride // 4
 
     @classmethod
     def setup_textured_quad(cls) -> list[int, int]:
@@ -486,9 +502,10 @@ class ShaderHandler:
         cls.u_mvp_loc = glGetUniformLocation(shader_program, "u_mvp")
 
         shader_file = cls.get_shader_file(shader)
-        cls.instance_vbo = shader_file["vbo"]
-        cls.vao = shader_file["vao"]
-        cls.stride_size = shader_file["stride_size"]
+        cls.instance_vbo = shader_file.vbo
+        cls.vao = shader_file.vao
+        cls.ssbo = shader_file.ssbo
+        cls.stride_size = shader_file.stride_size
         
     @classmethod
     def get_current_shader(cls) -> Callable:
@@ -730,12 +747,21 @@ class ShaderHandler:
         cls._render_list.append(sprite)
 
     @classmethod
-    def render(cls, mvp: np.array, texture: Draw, data: np.array, unit=GL_TEXTURE0) -> None:
+    def render(cls, mvp: np.array, texture: Draw, data: np.array, ssbo_data: np.array=[], unit=GL_TEXTURE0) -> None:
         glUniformMatrix4fv(cls.u_mvp_loc, 1, GL_TRUE, mvp)
         
         glBindBuffer(GL_ARRAY_BUFFER, cls.instance_vbo)
         glBufferSubData(GL_ARRAY_BUFFER, 0, data.nbytes, data)
         
+        if ssbo_data is False:
+            glBindBuffer(GL_SHADER_STORAGE_BUFFER, cls.ssbo)
+            glBufferSubData(
+                GL_SHADER_STORAGE_BUFFER,
+                0,
+                ssbo_data.nbytes,
+                ssbo_data
+            )
+
         glActiveTexture(unit)
         glBindTexture(GL_TEXTURE_2D, texture)
 
@@ -768,7 +794,7 @@ class ShaderHandler:
             same_batch = sprite.tex_id == last_id and sprite.unit == last_unit and same_program
             if not same_batch and batch:
                     data = cls.build_instance_buffer(batch, view, cam_scale, cam_angle)
-                    cls.render(mvp, last_id, data, last_unit)
+                    cls.render(mvp, last_id, data, unit=last_unit)
                     batch = []
 
             batch.append(sprite)
@@ -779,7 +805,7 @@ class ShaderHandler:
 
         if batch:
             data = cls.build_instance_buffer(batch, view, cam_scale, cam_angle)
-            cls.render(mvp, last_id, data, last_unit)
+            cls.render(mvp, last_id, data, unit=last_unit)
 
         cls._render_list = []
 

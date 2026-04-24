@@ -24,17 +24,28 @@ class Sprite:
     overhead: list
 
 class EntityTools:
-    ShaderHandler.add_shader_file("def", layout = [
-        ("iPos", 2),
+    ShaderHandler.add_shader_file("def", layout = {
+        "vao": [("iPos", 2),
         ("iScale", 2),
         ("iRot", 2),
         ("iUVOff", 2),
         ("iUVScale", 2),
         ("iRgb", 3),
-        ("iAlpha", 1),
-    ])
+        ("iAlpha", 1)]
+    })
     _font: pg.font = None
     _z = 0
+
+    @staticmethod
+    def get_default_shader_layout():
+        return {"vao": [("iPos", 2),
+        ("iScale", 2),
+        ("iRot", 2),
+        ("iUVOff", 2),
+        ("iUVScale", 2),
+        ("iRgb", 3),
+        ("iAlpha", 1)]
+    }
 
     @staticmethod
     def get_cam(cam: str) -> Cam:

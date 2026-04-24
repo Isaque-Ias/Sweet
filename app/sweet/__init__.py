@@ -10,5 +10,8 @@ from . import (
     common,
 )
 
+def init():
+    looping.GameLoop.setup()
+
 def start():
     looping.GameLoop.start()

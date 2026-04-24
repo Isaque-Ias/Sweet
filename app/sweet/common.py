@@ -48,3 +48,14 @@ class Rec:
 class UVLocation:
     tex_id: int = ""
     uv: Rec = None
+
+@dataclass
+class ShaderData:
+    layout: dict
+    vertex: str
+    fragment: str
+    program: object = None
+    vbo: int = None
+    vao: int = None
+    ssbo: int = None
+    stride_size: int = 0

@@ -1,4 +1,5 @@
 import pygame as pg
+from .common import Draw
 from pygame.locals import *
 import os
 from .graphics.shaders import ShaderHandler
@@ -38,6 +39,12 @@ class GameLoop:
     @classmethod
     def get_fullscreen(cls) -> bool:
         return cls._fullscreen
+    
+    @staticmethod
+    def set_icon(icon: Draw) -> None:
+        data = icon.tobytes()
+        surface = pg.image.fromstring(data, icon.size, icon.mode)
+        pg.display.set_icon(surface.convert())
 
     @classmethod
     def set_fullscreen(cls, value: bool) -> None:
