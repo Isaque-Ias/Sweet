@@ -21,6 +21,7 @@ class Texture:
             fps = cap.get(cv2.CAP_PROP_FPS)
 
             cls._textures[name] = Video(name, cap, FileType.STREAM, GL_BGR, ConvertType.VIDEO, fps, uuid.uuid4().hex)
+            return cls._textures[name]
 
         elif path.suffix == '.gif':
             gif = imageio.mimread(path)
@@ -37,6 +38,7 @@ class Texture:
                 file_type = FileType.DYNAMIC
             
             cls._textures[name] = Video(name, gif, file_type, image_format, ConvertType.GIF, occupation=uuid.uuid4().hex)
+            return cls._textures[name]
 
         elif path.suffix in ['.png', '.jpg', '.jpeg']:
             surface: Image.Image = Image.open(path).convert("RGBA")
@@ -46,6 +48,7 @@ class Texture:
                 file_type = FileType.BACKGROUND
 
             cls._textures[name] = Imaging(name, surface, file_type, GL_RGBA, uuid.uuid4().hex)
+            return cls._textures[name]
             
         else:
             raise FileNotFoundError
@@ -177,6 +180,12 @@ class Imaging:
 
     def get_image(self) -> "Imaging":
         return self._image
+    
+    def get_width(self) -> int:
+        return self._image.width
+    
+    def get_height(self) -> int:
+        return self._image.height
     
     def get_uv(self) -> dict:
         return self.uv
