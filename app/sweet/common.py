@@ -36,6 +36,7 @@ TextureData: TypeAlias = dict[Draw, int, int]
 AtlasTexture: TypeAlias = dict[int, int, int]
 Vector: TypeAlias = list[int, int]
 Controls: TypeAlias = Sequence[Vector] | Sequence[list[Vector, Vector, Vector]]
+Group: TypeAlias = Sequence | type | object
 
 @dataclass
 class Rec:
@@ -59,3 +60,11 @@ class ShaderData:
     vao: int = None
     ssbo: int = None
     stride_size: int = 0
+
+@dataclass
+class CollisionData:
+    mtv: int
+    normal: Vector
+    is_b: bool
+    contact_point: Vector
+    entity: object

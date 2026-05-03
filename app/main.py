@@ -11,6 +11,9 @@ sw.init()
 
 Texture.set_texture("PlayerBody", SOURCE / "player_body.png").upload()
 Texture.set_texture("PlayerLeg", SOURCE / "player_leg.png").upload()
+Texture.set_texture("pixel", SOURCE / "build" / "pixel.png").upload()
+
+grv = 10 / 60
 
 class Player(Entity):
     def __init__(self, pos):
@@ -18,30 +21,46 @@ class Player(Entity):
         self.spr_body = Texture.get_texture("PlayerBody")
         self.spr_legs = Texture.get_texture("PlayerLeg")
         self.size = 0.2
-        self.left_leg_angle = [0, 25]
-        self.right_leg_angle = [0, -25]
+        self.scale = Vec(self.spr_body.get_width() * self.size, self.spr_body.get_height() * self.size)
+        
+        vertices = [self.scale / 2, self.scale.mirror_x() / 2, -self.scale / 2, self.scale.mirror_y() / 2]
+
+        self.mask.add_polygon("main", sw.linalg.collision.Polygon(vertices))
+
+        self.jump_power = 5
+        self.speed = 3
+        self.velocity = Vec(0, 0)
 
     def tick(self):
-        self.left_leg_angle[0] = (Vec(*pg.mouse.get_pos()) - self.pos).angle() + 90
+        self.pos += self.velocity
+        self.velocity.y += grv
+
+        if Input.get_press(K_a):
+            self.pos.x -= 5
+        if Input.get_press(K_d):
+            self.pos.x += 5
+        if Input.get_press(K_SPACE):
+            self.velocity.y = -self.jump_power
+            
+        def response(entity, other, data):
+            entity.pos += data.mtv * (data.is_b * 2 - 1)
+
+        sw.linalg.collision.Collision.collision_list(self, Block, apply_func=response)
 
     def draw(self):
-        body_width, body_height = self.spr_body.get_width() * self.size, self.spr_body.get_height() * self.size
-        leg_width, leg_height = self.spr_legs.get_width() * self.size, self.spr_legs.get_height() * self.size
-        
-        left_leg_center = Vec(.3 * body_width, .0 * body_height) + Vec(0, leg_height / 2).rotate(self.left_leg_angle[0])
-        right_leg_center = Vec(-.3 * body_width, .0 * body_height) + Vec(0, leg_height / 2).rotate(self.right_leg_angle[0])
-        
-        bottom_left_leg_center = Vec(.3 * body_width, .0 * body_height) + Vec(0, leg_height - leg_width / 2).rotate(self.left_leg_angle[0]) + Vec(0, leg_height / 2).rotate(self.left_leg_angle[1])
-        bottom_right_leg_center = Vec(-.3 * body_width, .0 * body_height) + Vec(0, leg_height - leg_width / 2).rotate(self.right_leg_angle[0]) + Vec(0, leg_height / 2).rotate(self.right_leg_angle[1])
-        
-        EntityTools.draw_image(self.spr_legs, (self.pos + left_leg_center).unp(), (leg_width, leg_height), self.left_leg_angle[0])
-        EntityTools.draw_image(self.spr_legs, (self.pos + bottom_left_leg_center).unp(), (leg_width, leg_height), self.left_leg_angle[1])
-        
-        EntityTools.draw_image(self.spr_body, self.pos.unp(), (body_width, body_height))
+        EntityTools.draw_image(self.spr_body, self.pos.unp(), self.scale.unp())
 
-        EntityTools.draw_image(self.spr_legs, (self.pos + right_leg_center).unp(), (leg_width, leg_height), self.right_leg_angle[0])
-        EntityTools.draw_image(self.spr_legs, (self.pos + bottom_right_leg_center).unp(), (leg_width, leg_height), self.right_leg_angle[1])
+class Block(Entity):
+    def __init__(self, pos, size=(100, 100), angle=0):
+        super().__init__(pos, Texture.get_texture("pixel"), size, angle, order=5)
+        vertices = [self.scale / 2, self.scale.mirror_x() / 2, -self.scale / 2, self.scale.mirror_y() / 2]
+        self.mask.add_polygon("main", sw.linalg.collision.Polygon(vertices))
 
-Player((200, 200))
+    def draw(self):
+        EntityTools.draw_image(self.image, self.pos.unp(), self.scale.unp(), self.angle, color=(127, 127, 127))
+
+a = Player((200, 200))
+Block((100, 400))
+Block((200, 400))
 
 sw.start()

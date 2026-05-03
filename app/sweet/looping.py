@@ -169,8 +169,12 @@ class GameLoop:
             for key in entity_changes:
                 EntityManager.create_entity(*entity_changes[key])
 
+            destroy_changes: list = EntityManager.get_destroy_changes()
+            for key in destroy_changes:
+                EntityManager.destroy_entity(entity_changes[key])
+
             EntityManager.clear_agend()
-        
+
             Input.mouse_scroll_x = 0
             Input.mouse_scroll_y = 0
             for event in pg.event.get():

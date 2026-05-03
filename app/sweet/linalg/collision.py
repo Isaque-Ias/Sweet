@@ -1,18 +1,40 @@
 from OpenGL.GL import *
 from pygame.locals import *
 from .vector import Vec
-from typing import Sequence
-
-class Mask:
-    def __init__(self, vertices: Sequence[Vec]) -> None:
-        self.vertices = vertices
+from typing import Sequence, Callable
+from ..common import Group, CollisionData
+from ..entity import EntityManager, Mask, Polygon
 
 class Collision:
+    @classmethod
+    def collision_list(cls, element: object, group: Sequence, polygon_a: Polygon = None, polygon_b: Polygon = None, order=True, apply_func:Callable = None) -> list[CollisionData]:
+        if polygon_a == None: polygon_a = element.mask.def_polygon()
+
+        if isinstance(group, type):
+            group = EntityManager.get_entity_group(group)
+
+        result = []
+
+        for other in group:
+            if polygon_b == None: polygon_b = other.mask.def_polygon()
+            collision = cls.colliding(element, other, polygon_a, polygon_b)
+            if collision:
+                if apply_func:
+                    apply_func(element, other, collision)
+
+                result.append(collision)
+
+        if order:
+            result.sort(key=lambda x: x.mtv.magnitude())
+            
+        return result
+
     @staticmethod
-    def collision_data(x1: Mask, x2: Mask) -> dict | bool:
+    def colliding(a: object, b: object, polygon_a: Polygon, polygon_b: Polygon) -> CollisionData:
         lowest_overlap: float = float("inf")
         overlap_axis: Vec = Vec(0, 0)
         is_b: bool = False
+        x1, x2 = polygon_a.translate(a.pos), polygon_b.translate(b.pos)
 
         contact_point: bool = Vec(0, 0)
 
@@ -46,13 +68,13 @@ class Collision:
                 if overlap < lowest_overlap:
                     lowest_overlap: float = overlap
                     
-                    direction: Vec = (x2.pos - x1.pos)
+                    direction: Vec = (b.pos - a.pos)
                     if axis.dot(direction) < 0:
                         axis: Vec = -axis
 
                     overlap_axis: Vec = axis
 
-        return {'mtv': overlap_axis * lowest_overlap, "normal": overlap_axis, "is_b": is_b, "contact_point": contact_point}
+        return CollisionData(mtv=overlap_axis * lowest_overlap, normal=overlap_axis, is_b=is_b, contact_point=contact_point, entity=b)
 
     @classmethod
     def get_collisions(cls, object) -> None:
