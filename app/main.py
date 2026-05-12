@@ -127,7 +127,7 @@ class Block3(Entity):
         self.velocity.x *= 0.8
 
         self.pos += self.velocity
-        print(self.velocity)
+        # print(self.velocity)
 
         def response2(entity, other, data):
             entity.pos += data.mtv * (data.is_b * 2 - 1)
