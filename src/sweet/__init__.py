@@ -29,23 +29,17 @@ def run():
 class Entity(entity.Entity):
     def __init__(
                 self,
-                image: Imaging | None = None,
                 pos: tuple[int, int] | tuple[int, int, int] = (0, 0),
                 scale: tuple[int, int] | tuple[int, int, int] = (1, 1),
                 angle: float | tuple[float, float, float] = 0,
-                layer: int = 0,
-                order: int = -1,
                 pre_tick: bool = False,
                 tick: bool = False,
                 pos_tick: bool = False
             ):
         super().__init__(
-                image,
                 pos,
                 scale,
                 angle,
-                layer,
-                order,
                 pre_tick,
                 tick,
                 pos_tick
@@ -126,17 +120,4 @@ class Display:
     def title(text: str) -> None:
         looping.GameLoop.set_title(text)
     
-    @staticmethod
-    def icon(image: Imaging) -> None:
-        looping.GameLoop.set_icon(image.get_image())
-
-class Animations:
-    @staticmethod
-    def load_json_resource(path: str | Path) -> None:
-        graphics.texture.Animation.load_json_textures(path)
-    
-    @staticmethod
-    def get(name: str):
-        return graphics.texture.Animation.get_video(name)
-
 __all__ = ["Resources", "Display"]

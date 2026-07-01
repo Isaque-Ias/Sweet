@@ -3,17 +3,10 @@ import uuid
 from .shaders import ShaderTexture
 from ..common import *
 from ..path_solver import solve_path
-import cv2
-import imageio
-import OpenGL.GL as gl
+import OpenGL.GL as gl # type: ignore
 import json
 from pathlib import Path
-import numpy as np
-from numpy.typing import NDArray
 from collections.abc import Callable
-
-type FrameList = cv2.VideoCapture | list[NDArray[np.uint8]]
-
 class Texture:
     _atlas_size = ShaderTexture.get_atlas_size()
     _textures: dict[str, "Imaging"] = {}
@@ -22,7 +15,7 @@ class Texture:
     def load_json_textures(cls, path: str | Path) -> None:
         with open(path, "r") as file:
             assets = json.load(file)
-            
+
         for asset_type in assets.keys():
             if asset_type == "textures":
                 textures = assets[asset_type]
@@ -36,17 +29,17 @@ class Texture:
         if not cls._textures.get(name) == None:
             raise KeyError
 
-        elif path.suffix in ['.png', '.jpg', '.jpeg']:
+        elif path.suffix in [".png", ".jpg", ".jpeg"]:
             surface: Image.Image = Image.open(path)
 
             file_type = FileType.BATCH
             if max(surface.width, surface.height) > 1024:
                 file_type = FileType.BACKGROUND
 
-            cls._textures[name] = Imaging(name, surface, file_type, gl.GL_RGBA, uuid.uuid4().hex) # type: ignore
+            cls._textures[name] = Imaging(name, surface, file_type, gl.GL_RGBA, uuid.uuid4().hex)  # type: ignore
             cls._textures[name].upload()
             return cls._textures[name]
-            
+
         else:
             raise FileNotFoundError
 
@@ -57,87 +50,30 @@ class Texture:
 
     @classmethod
     def get_texture(cls, name: str) -> "Imaging":
+        if cls._textures.get(name) is None:
+            raise KeyError(
+                f"Texture '{name}' not found. Have you loaded the assets.json file?"
+            )
         return cls._textures[name]
-    
+
     @classmethod
     def delete_texture(cls, name: str) -> None:
+        if cls._textures.get(name) is None:
+            raise KeyError(
+                f"Texture '{name}' not found. Have you loaded the assets.json file?"
+            )
         del cls._textures[name]
-    
-class Animation:
-    _atlas_size = ShaderTexture.get_atlas_size()
-    _videos: dict[str, "Video"] = {}
 
-    @classmethod
-    def load_json_textures(cls, path: str | Path) -> None:
-        with open(path, "r") as file:
-            textures = json.load(file)
-        
-        for key in textures.keys():
-            path = textures[key]
-            absolute_path = solve_path(path)
-            cls.set_video(key, absolute_path)
-
-    @classmethod
-    def set_video(cls, name: str, path: Path) -> "Video":
-        if not cls._videos.get(name) == None:
-            raise KeyError
-
-        if path.suffix == '.mp4':
-            cap = cv2.VideoCapture(path)
-            fps = cap.get(cv2.CAP_PROP_FPS)
-
-            cls._videos[name] = Video(name, cap, FileType.STREAM, gl.GL_BGR, ConvertType.VIDEO, fps, uuid.uuid4().hex) # type: ignore
-            cls._videos[name].upload()
-            return cls._videos[name]
-
-        elif path.suffix == '.gif':
-            gif: list[NDArray[uint8]] = imageio.mimread(path) # type: ignore
-
-            if gif[0].shape[2] == 4:
-                image_format = gl.GL_RGBA # type: ignore
-            else:
-                image_format = gl.GL_RGB # type: ignore
-            
-            file_type = FileType.BATCHLIST
-            total_area = sum(f.shape[0] * f.shape[1] for f in gif) # type: ignore
-
-            if total_area > cls._atlas_size * cls._atlas_size * 0.7:
-                file_type = FileType.DYNAMIC
-
-            cls._videos[name] = Video(name, gif, file_type, image_format, ConvertType.GIF, occupation=uuid.uuid4().hex)
-            cls._videos[name].upload()
-            return cls._videos[name]
-    
-        raise TypeError("Formato de arquivo não suportado.")
-
-    @classmethod
-    def link_video(cls, video: "Video", name: str, new_name: str) -> None:
-        cls.delete_video(name)
-        cls._videos[new_name] = video
-
-    @classmethod
-    def get_video(cls, name: str) -> "Video":
-        return cls._videos[name]
-    
-    @classmethod
-    def delete_video(cls, name: str) -> None:
-        del cls._videos[name]
-
-class Video:
-    def __init__(self, name: str, images: FrameList, file_type: FileType, image_format: int, convertion: ConvertType, occupation: str | None = None) -> None:
-        self.name = name
-        self.occupation = occupation
-        self.images = images
-        self.images = images
-        self.file_type = file_type
-        self.image_format = image_format
-        self.convertion_type = convertion
-
-    def upload(self):
-        pass
 
 class Imaging:
-    def __init__(self, name: str, image: Image.Image, file_type: FileType, image_format: int, occupation: str | None = None) -> None:
+    def __init__(
+        self,
+        name: str,
+        image: Image.Image,
+        file_type: FileType,
+        image_format: int,
+        occupation: str | None = None,
+    ) -> None:
         self.name = name
         self.occupation = occupation
         self.image_format = image_format
@@ -147,18 +83,18 @@ class Imaging:
         self.uv = UVLocation()
 
         self.set_image(image)
-    
+
     def opaque_test(self, image: Image.Image) -> bool:
-        if image.mode not in ('RGBA', 'LA') and 'transparency' not in image.info:
+        if image.mode not in ("RGBA", "LA") and "transparency" not in image.info:
             return True
-        
-        image.convert('RGBA')
+
+        image.convert("RGBA")
         alpha = image.split()[-1]
         min_alpha, _ = alpha.getextrema()
 
         return min_alpha == 255
 
-    def set_image(self, image: Image.Image, upload: bool=False) -> None:
+    def set_image(self, image: Image.Image, upload: bool = False) -> None:
         self._image = image
 
         if upload:
@@ -167,16 +103,16 @@ class Imaging:
 
     def get_image(self) -> Image.Image:
         return self._image
-    
+
     def get_width(self) -> int:
         return self._image.width
-    
+
     def get_height(self) -> int:
         return self._image.height
-    
+
     def get_uv(self) -> UVLocation:
         return self.uv
-    
+
     def get_texture(self) -> str | None:
         return self.uv.texture
 
@@ -184,9 +120,13 @@ class Imaging:
         if self.occupation == None:
             raise ValueError("Sem ocupação definida")
         if self.file_type in [FileType.DYNAMIC, FileType.BACKGROUND]:
-            self.uv = ShaderTexture.create_texture(self.get_image(), ConvertType.IMAGE, self.occupation)
+            self.uv = ShaderTexture.create_texture(
+                self.get_image(), ConvertType.IMAGE, self.occupation
+            )
         elif self.file_type == FileType.BATCH:
-            self.uv = ShaderTexture.create_texture_atlas(self.get_image(), ConvertType.IMAGE, self.uv)
+            self.uv = ShaderTexture.create_texture_atlas(
+                self.get_image(), ConvertType.IMAGE, self.uv
+            )
         else:
             raise TypeError
 
@@ -212,7 +152,7 @@ class Imaging:
     @staticmethod
     def rescale(img: Image.Image, sx: float, sy: float) -> Image.Image:
         w, h = img.size
-        return img.resize((int(w * sx), int(h * sy)), Image.NEAREST) # type: ignore
+        return img.resize((int(w * sx), int(h * sy)), Image.NEAREST)  # type: ignore
 
     @staticmethod
     def rotate(img: Image.Image, angle: float) -> Image.Image:
@@ -249,7 +189,9 @@ class Imaging:
         return Image.merge("RGBA", (r, g, b, a))
 
     @staticmethod
-    def paste_image(base: Image.Image, overlay: Image.Image, x: int, y: int) -> Image.Image:
+    def paste_image(
+        base: Image.Image, overlay: Image.Image, x: int, y: int
+    ) -> Image.Image:
         base = base.convert("RGBA")
         overlay = overlay.convert("RGBA")
 

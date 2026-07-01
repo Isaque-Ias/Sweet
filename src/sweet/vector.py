@@ -62,15 +62,11 @@ class VecN:
             scalars: list[float] = [self.scalars[i] - other[i] for i in range(len(self.scalars))]
         return VecN(scalars)
 
-    def __mul__(self, other: "VecN | Sequence[int | float] | int | float") -> "VecN | float":
-        if isinstance(other, int | float):
-            return VecN([self.scalars[i] * other for i in range(len(self.scalars))])
-        return sum(self.scalars[i] * other[i] for i in range(len(self.scalars)))
+    def __mul__(self, other: int | float) -> "VecN":
+        return VecN([self.scalars[i] * other for i in range(len(self.scalars))])
 
-    def __rmul__(self, other: "VecN | Sequence[int | float] | int | float") -> "VecN | float":
-        if isinstance(other, int | float):
-            return VecN([self.scalars[i] * other for i in range(len(self.scalars))])
-        return sum(self.scalars[i] * other[i] for i in range(len(self.scalars)))
+    def __rmul__(self, other: int | float) -> "VecN":
+        return VecN([self.scalars[i] * other for i in range(len(self.scalars))])
     
     def __truediv__(self, other: int | float) -> "VecN":
         scalars: list[float] = [self.scalars[i] / other for i in range(len(self.scalars))]
@@ -166,17 +162,11 @@ class Vec2:
             return Vec2(self.x - other.x, self.y - other.y)
         return Vec2(self.x + other[0], self.y + other[1])
 
-    def __mul__(self, other: "Vec2 | Sequence[int | float] | int | float") -> "Vec2 | float":
-        if isinstance(other, int | float):
-            return Vec2(self.x * other, self.y * other)
+    def __mul__(self, other: int | float) -> "Vec2":
+        return Vec2(self.x * other, self.y * other)
 
-        return self.dot(other)
-
-    def __rmul__(self, other: "Vec2 | Sequence[int | float] | int | float") -> "Vec2 | float":
-        if isinstance(other, int | float):
-            return Vec2(self.x * other, self.y * other)
-
-        return self.dot(other)
+    def __rmul__(self, other: int | float) -> "Vec2":
+        return Vec2(self.x * other, self.y * other)
     
     def __truediv__(self, other: int | float) -> "Vec2":
         return Vec2(self.x / other, self.y / other)
@@ -267,17 +257,11 @@ class Vec3:
             return Vec3(self.x - other.x, self.y - other.y, self.z - other.z)
         return Vec3(self.x + other[0], self.y + other[1], self.z + other[2])
 
-    def __mul__(self, other: "Vec3" | Sequence[int | float] | int | float) -> "Vec3 | float":
-        if isinstance(other, int | float):
-            return Vec3(self.x * other, self.y * other, self.z * other)
-        
-        return self.dot(other)
+    def __mul__(self, other: int | float) -> "Vec3":
+        return Vec3(self.x * other, self.y * other, self.z * other)
 
-    def __rmul__(self, other: "Vec3" | Sequence[int | float] | int | float) -> "Vec3 | float":
-        if isinstance(other, int | float):
-            return Vec3(self.x * other, self.y * other, self.z * other)
-
-        return self.dot(other)
+    def __rmul__(self, other: int | float) -> "Vec3":
+        return Vec3(self.x * other, self.y * other, self.z * other)
 
     def __truediv__(self, other: int | float) -> "Vec3":
         return Vec3(self.x / other, self.y / other, self.z / other)

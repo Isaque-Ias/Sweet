@@ -1,244 +1,178 @@
-# import sweet as sw
-# from sweet.entity import *
-# from sweet.inputting import *
-# from sweet.graphics.texture import *
-# from pathlib import Path
-# from pygame.locals import *
-# from math import pi
+import math
+import sweet as sw
+from pathlib import Path
+from sweet.vector import Vec3
 
-# SOURCE = Path.cwd() / "src" / "sources"
-# sw.looping.GameLoop.set_screen_size((sw.looping.GameLoop.view_width, sw.looping.GameLoop.view_height))
-# main_cam = sw.camera.Camera.get_main_camera()
-# view_size = Vec2(480, 270)
-# cam_factor = (view_size.y / sw.looping.GameLoop.view_height)
-# main_cam.set_scale((cam_factor, cam_factor))
+class Floor(sw.Entity):
+    def __init__(self):
+        super().__init__((0, 0, 0), tick=True)
+        self.pos = Vec3(0, 0, 0)
 
-# sw.looping.GameLoop.set_background_color((255, 230, 147, 1))
+    def draw(self):
+        floor_texture = sw.Resources.texture("plane")
+        floor_model = sw.Resources.model("floor")
 
-# ShaderManager.add_shader_file("floor", {"vao": [
-#     ("iPos", 2),
-#     ("iScale", 2),
-#     ("iRot", 2),
-#     ("iUVOff", 2),
-#     ("iUVScale", 2),
-#     ("iRgb", 3),
-#     ("iAlpha", 1),
-#     ("iView", 2),
-#     ("iNPos", 3),
-#     ("iNScale", 3),
-#     ("iNRot", 3),
-#     ]
-# })
-# ShaderManager.add_shader_file("def3d", EntityTools.get_default_3d_shader_layout())
-# sw.init()
+        sw.entity.Draw.draw_image(
+            floor_model,
+            floor_texture,
+            Vec3(self.pos.x, self.pos.y, self.pos.z),
+            Vec3(1000, 1, 1000),
+            Vec3(0, 0, 0),
+        )
 
-# Texture.set_texture("PlayerBody", SOURCE / "player_body.png").upload()
-# Texture.set_texture("PlayerLeg", SOURCE / "player_leg.png").upload()
-# Texture.set_texture("pixel", SOURCE / "build" / "pixel.png").upload()
-# Texture.set_texture("churchglass", SOURCE / "churchglass.png").upload()
-# Texture.set_texture("churchwall", SOURCE / "churchwall.png").upload()
-# Texture.set_texture("frontlane", SOURCE / "frontlane.png").upload()
-# Texture.set_texture("churchlight", SOURCE / "light.png").upload()
-# Texture.set_texture("vignette", SOURCE / "vignette.png").upload()
-# Texture.set_texture("frontline", SOURCE / "frontline.png").upload()
-# Texture.set_texture("ground", SOURCE / "floor.png").upload()
-# Texture.set_texture("ground_l", SOURCE / "floor2.png").upload()
 
-# grv = 10 / 60
+class Player(sw.Entity):
+    def __init__(self):
+        super().__init__((0, 0, 200), tick=True)
+        self.pos: Vec3
+        self.angle: Vec3
+        self.camera_angle = Vec3(0, 0, 0)
+        self.mouse_x, self.mouse_y = sw.inputting.Input.get_mouse_pos()
+        self.fov = 70
+        self.speed = 1
+        self.player_height = 1
+        self.velocity = Vec3(0, 0, 0)
 
-# class Player(Entity):
-#     def __init__(self, pos):
-#         super().__init__(pos, order=5, tick=True)
-#         self.spr_body = Texture.get_texture("PlayerBody")
-#         self.spr_legs = Texture.get_texture("PlayerLeg")
-#         self.size = .05
-#         self.scale = Vec(self.spr_body.get_width() * self.size, self.spr_body.get_height() * self.size)
-        
-#         vertices = [Vec(self.scale.x / 2, 0).rotate(angle * 360 / 15) for angle in range(15)]
+        self.cam_distance = 4.0
+        self.cam_height = 2.0
+        self.cam_shoulder = 1.6
 
-#         self.mask.add_polygon("main", sw.linalg.collision.Polygon(vertices))
+        sw.inputting.Input.set_mouse_visibility(False)
 
-#         self.jump_power = 4
-#         self.speed = 36 / 60
-#         self.velocity = Vec(0, 0)
-#         self.floor_collision = False
-#         self.right_grip = False
-#         self.left_grip = False
+    def tick(self):
+        screen_size = sw.Display.screen_size
 
-#         self.jumped = False
+        # --- mouse look (do this FIRST so movement/camera use the current frame's angle) ---
+        mouse_x, mouse_y = sw.inputting.Input.get_mouse_pos()
+        mouse_dx = mouse_x - self.mouse_x
+        mouse_dy = mouse_y - self.mouse_y
+        self.mouse_x, self.mouse_y = mouse_x, mouse_y
 
-#         self.current_pos = Vec(0, 0)
-#         self.offset = Vec(0, -30)
+        self.camera_angle.x -= mouse_dx * 0.2
+        self.camera_angle.y += mouse_dy * 0.2
+        self.camera_angle.y = min(89, max(-89, self.camera_angle.y))
 
-#     def tick(self):
-#         self.velocity.y += grv
-#         self.velocity.x *= 0.8
+        if self.mouse_x == 0 or self.mouse_x == screen_size[0] - 1:
+            sw.inputting.Input.set_mouse_pos(screen_size[0] // 2, self.mouse_y)
+            self.mouse_x = screen_size[0] // 2
+        if self.mouse_y == 0 or self.mouse_y == screen_size[1] - 1:
+            sw.inputting.Input.set_mouse_pos(self.mouse_x, screen_size[1] // 2)
+            self.mouse_y = screen_size[1] // 2
 
-#         self.pos += self.velocity
+        # --- gravity / vertical movement ---
+        self.velocity.y -= 0.5
+        self.pos += self.velocity
 
-#         if Input.get_press(K_a):
-#             self.velocity.x -= self.speed
-#         if Input.get_press(K_d):
-#             self.velocity.x += self.speed
+        self.pos.y = max(self.pos.y, self.player_height)
+        if (
+            sw.inputting.Input.get_pressed(sw.inputting.Input.key_code.SPACE)
+            and self.pos.y <= self.player_height
+        ):
+            self.velocity.y = 20
 
-#         if Input.get_press(K_SPACE) and not self.jumped:
-#             if self.floor_collision:
-#                 self.velocity.y = -self.jump_power
-#                 self.jumped = True
-#             elif self.left_grip:
-#                 self.velocity.y = -self.jump_power
-#                 self.velocity.x = self.jump_power
-#                 self.jumped = True
-#             elif self.right_grip:
-#                 self.velocity.y = -self.jump_power
-#                 self.velocity.x = -self.jump_power
-#                 self.jumped = True
+        # --- horizontal movement (relative to camera yaw) ---
+        yaw = math.radians(self.camera_angle.x)
+        pitch = math.radians(self.camera_angle.y)
 
-#         if Input.get_released(K_SPACE):
-#             self.jumped = False
-            
-#         self.floor_collision = False
-#         self.right_grip = False
-#         self.left_grip = False
-#         def response(entity, other, data):
-#             entity.pos += data.mtv * (data.is_b * 2 - 1)
-#             parallel = Vec(data.mtv.y, -data.mtv.x)
-#             parallel_magnitude = parallel.magnitude_squared()
-#             if parallel.cross(entity.velocity) > 0:
-#                 entity.velocity = parallel * parallel.dot(entity.velocity) / parallel_magnitude
+        if sw.inputting.Input.get_press(sw.inputting.Input.key_code.W):
+            self.pos.x -= math.sin(yaw) * self.speed
+            self.pos.z -= math.cos(yaw) * self.speed
+        if sw.inputting.Input.get_press(sw.inputting.Input.key_code.S):
+            self.pos.x += math.sin(yaw) * self.speed
+            self.pos.z += math.cos(yaw) * self.speed
+        if sw.inputting.Input.get_press(sw.inputting.Input.key_code.A):
+            self.pos.x -= math.cos(yaw) * self.speed
+            self.pos.z += math.sin(yaw) * self.speed
+        if sw.inputting.Input.get_press(sw.inputting.Input.key_code.D):
+            self.pos.x += math.cos(yaw) * self.speed
+            self.pos.z -= math.sin(yaw) * self.speed
 
-#             if data.mtv.x == 0:
-#                 if data.mtv.y > 0:
-#                     self.floor_collision = True
-#             else:
-#                 if abs(data.mtv.y / data.mtv.x) > 1 and data.mtv.y > 0:
-#                     self.floor_collision = True
+        if sw.inputting.Input.get_press(sw.inputting.Input.key_code.Q):
+            self.fov += 1
+        if sw.inputting.Input.get_press(sw.inputting.Input.key_code.E):
+            self.fov -= 1
 
-#             if data.mtv.y == 0:
-#                 if data.mtv.x > 0:
-#                     self.right_grip = True
-#                 else:
-#                     self.left_grip = True
+        # --- single, unified over-the-shoulder camera ---
+        # forward = Vec3(math.sin(yaw), 0, math.cos(yaw))
+        right = Vec3(math.cos(yaw), 0, -math.sin(yaw))
 
-#                 self.velocity.y *= 0.7
+        # look direction including pitch (for pull-back/height as you look up/down)
+        look_dir = Vec3(
+            math.sin(yaw) * math.cos(pitch),
+            math.sin(pitch),
+            math.cos(yaw) * math.cos(pitch),
+        )
 
-#         sw.linalg.collision.Collision.collision_list(self, Block, apply_func=response)
+        cam_pos = self.pos
+        cam_pos += Vec3(0, self.cam_height, 0)
+        right_dist = right * self.cam_shoulder
+        back_dist = look_dir * self.cam_distance
+        cam_pos += right_dist + back_dist
 
-#         goal_pos = self.pos - view_size / 2 + self.offset
-#         self.current_pos += (goal_pos - self.current_pos) / 10
-#         main_cam.set_pos(self.current_pos.unp())
+        main_cam = sw.camera.CameraManager.get_main_camera()
+        main_cam.pos = cam_pos
+        main_cam.angles = self.camera_angle
+        main_cam.fov = self.fov
 
-#     def draw(self):
-#         pass
-#         # EntityTools.draw_image(self.spr_body, self.pos.unp(), self.scale.unp(), color=(127, 127, 127))
-#         # EntityTools.draw_image_3d(self.spr_body, (*self.pos.unp(), -1), (*self.scale.unp(), 1), color=(127, 127, 127), program="def3d")
-#         # EntityTools.draw_image_3d(self.spr_body, (*self.pos.mirror_y().unp(), -1), (40, 40, 1), (0, 0, 0), offset=(0, -300), color=(127, 127, 127), program="def3d")
+    def draw(self):
+        player_texture = sw.Resources.texture("plane")
+        player_model = sw.Resources.model("player2")
 
-# class Block(Entity):
-#     def __init__(self, pos, size=(100, 100), angle=0):
-#         super().__init__(pos, image=Texture.get_texture("pixel"), scale=size, angle=angle, order=5)
-#         vertices = [self.scale / 2, self.scale.mirror_x() / 2, -self.scale / 2, self.scale.mirror_y() / 2]
-#         self.mask.add_polygon("main", sw.linalg.collision.Polygon(vertices))
-#         self.mask.polygons["main"] = self.mask.get_polygon("main").rotate(self.angle)
+        sw.entity.Draw.draw_image(
+            player_model,
+            player_texture,
+            self.pos,
+            Vec3(1, 1, 1),
+            Vec3(0, 0, 0),
+        )
 
-#     def draw(self):
-#         pass
-#         # EntityTools.draw_image(self.image, self.pos.unp(), self.scale.unp(), self.angle, color=(127, 127, 127))
 
-# def parallax(size, pos, rate):
-#     camera_pos = Vec(*main_cam.get_pos())
-#     position = Vec(camera_pos.x * rate, -size.y / 2) + pos
-#     return position
+class Plane(sw.Entity):
+    def __init__(self):
+        super().__init__((0, 0, 0), tick=True)
+        self.pos = Vec3(0, 0, 0)
 
-# class Background(Entity):
-#     def __init__(self):
-#         super().__init__((0, 0), order=2)
-#         self.front_background = Texture.get_texture("frontlane")
-#         blend = (100, 66, 47)
-#         factor = .2
-#         self.front_background.set_image(self.front_background.apply_channels(self.front_background.get_image(),
-#                                              lambda x: x * (1 - factor) + blend[0] * factor,
-#                                              lambda x: x * (1 - factor) + blend[1] * factor,
-#                                              lambda x: x * (1 - factor) + blend[2] * factor, lambda x: x))
-#         self.front_background.upload()
-#         self.front_bg_size = (self.front_background.get_width(), self.front_background.get_height())
-#         self.back_background = Texture.get_texture("churchwall")
-#         blend = (100, 66, 47)
-#         factor = .33
-#         self.back_background.set_image(self.back_background.apply_channels(self.back_background.get_image(),
-#                                              lambda x: x * (1 - factor) + blend[0] * factor,
-#                                              lambda x: x * (1 - factor) + blend[1] * factor,
-#                                              lambda x: x * (1 - factor) + blend[2] * factor, lambda x: x))
-#         self.back_background.upload()
-#         self.back_bg_size = (self.back_background.get_width(), self.back_background.get_height())
-#         self.ground = Texture.get_texture("ground")
-#         self.ground_size = (self.ground.get_width(), self.ground.get_height())
-#         self.ground_layer = Texture.get_texture("ground_l")
-#         self.layer_size = (self.ground_layer.get_width(), self.ground_layer.get_height())
-#         self.back_background_glass = Texture.get_texture("churchglass")
-#         self.back_background_light = Texture.get_texture("churchlight")
-#         self.back_light_size = (self.back_background_light.get_width(), self.back_background_light.get_height())
-#         self.light = Texture.get_texture("churchlight")
-#         self.pixel = Texture.get_texture("pixel")
+    def tick(self):
+        if sw.inputting.Input.get_press(sw.inputting.Input.key_code.I):
+            self.pos.y -= 1
+        if sw.inputting.Input.get_press(sw.inputting.Input.key_code.J):
+            self.pos.x -= 1
+        if sw.inputting.Input.get_press(sw.inputting.Input.key_code.K):
+            self.pos.y += 1
+        if sw.inputting.Input.get_press(sw.inputting.Input.key_code.L):
+            self.pos.x += 1
+        if sw.inputting.Input.get_press(sw.inputting.Input.key_code.N):
+            self.pos.z += 1
+        if sw.inputting.Input.get_press(sw.inputting.Input.key_code.M):
+            self.pos.z -= 1
 
-#     def draw(self):
-#         def ease(t):
-#             t = min(max(0, t), 1)
-#             return 3 * t * t - 2 * t * t * t
-#         camera_pos = Vec(*main_cam.get_pos())
-#         camera_center = camera_pos + view_size / 2
+    def draw(self):
+        plane_texture = sw.Resources.texture("plane")
+        plane_model = sw.Resources.model("plane")
 
-#         # for i in range(-10, 10):
-#         #     ground_pos = parallax(Vec(*self.ground_size), Vec(self.ground_size[0] * i, 0 + self.ground_size[1]), 0)
-#         #     EntityTools.draw_image(self.ground, Vec(0, ground_pos.y).unp(), (self.ground_size[0], self.ground_size[1]), program="floor", overhead_data=[sw.looping.GameLoop.view_width, sw.looping.GameLoop.view_height, self.ground_size[0] / cam_factor * i / sw.looping.GameLoop.view_width, .86, 0, 1, 3.5, 1, 2.3, 0, 0])
-#         # # ground_pos = parallax(Vec(*self.ground_size), Vec(self.ground_size[0] * 0, 150 + self.ground_size[1]), 0)
-#         # # EntityTools.draw_image_3d(self.ground, (-camera_pos.x, -10, -.1), (self.ground_size[0], self.ground_size[1], 1), (pi / 2, 0, 0), offset=(0, -300), color=(127, 127, 127), program="def3d")
-#         # # for i in range(-10, 10):
-#         # back_bg_pos = parallax(Vec(*self.back_bg_size), Vec(self.back_bg_size[0], 0), .333 * 1.36)
-#         # EntityTools.draw_image(self.back_background, back_bg_pos.unp(), self.back_bg_size, color=(185, 161, 141))
-#         # # EntityTools.draw_image_3d(self.back_background, (back_bg_pos.x - camera_pos.x, back_bg_pos.y, -2), (self.back_bg_size[0], self.back_bg_size[1], 1), (0, 0, 0), offset=(0, -300), color=(127, 127, 127), program="def3d")
-#         # #     EntityTools.draw_image(self.back_background_glass, back_bg_pos.unp(), self.back_bg_size)
-#         # for i in range(-10, 10):
-#         #     light_pos = parallax(Vec(*self.back_bg_size), Vec(self.back_bg_size[0] * i, 0), .333 * 1.36)
-#         #     alpha_val = 1.1 * max(0, ease((200 - abs(light_pos.x - camera_center.x)) / 200))
-#         #     EntityTools.draw_image(self.back_background_light, light_pos.unp(), self.back_light_size, alpha=alpha_val, color=(255, 236, 175))
+        sw.entity.Draw.draw_image(
+            plane_model,
+            plane_texture,
+            Vec3(self.pos.x, self.pos.y, self.pos.z),
+            Vec3(1, 1, 1),
+            Vec3(0, 0, 0),
+        )
 
-#         # for i in range(-10, 10):
-#         #     front_bg_pos = parallax(Vec(*self.front_bg_size), Vec(self.front_bg_size[0] * i + 200, 0), 0.2)
 
-#         #     EntityTools.draw_image(self.front_background, front_bg_pos.unp(), self.front_bg_size)
+if __name__ == "__main__":
+    sw.Display.resizable(True)
+    screen_size = sw.Display.screen_size
+    sw.Display.size((screen_size[0], screen_size[1]))
+    sw.Display.background((135, 206, 250, 255))
 
-# class Foreground(Entity):
-#     def __init__(self):
-#         super().__init__((0, 0), order=6)
-#         self.vignette = Texture.get_texture("vignette")
-#         self.vignette_size = (self.vignette.get_width(), self.vignette.get_height())
-#         self.front_pillar = Texture.get_texture("frontline")
-#         self.pillar_size = (self.front_pillar.get_width() * 2, self.front_pillar.get_height() * 2)
-#         self.sprite = Texture.get_texture("ground")
-#         self.vignette_alpha = 0.6
-#         self.spr_body = Texture.get_texture("PlayerBody")
-#         self.k = 1
+    sw.init()
 
-#     def draw(self):
-#         camera_pos = Vec(*main_cam.get_pos())
-#         camera_center = camera_pos + view_size / 2
+    CWD = Path.cwd()
+    sw.Resources.load_assets(CWD / "assets.json")
+    BUILD = CWD / "src" / "sweet" / "build"
 
-#         EntityTools.draw_image_3d(self.sprite, (0, -200, -1), (1000, 1000, 1), (pi / 2, 0, 0))
-#         EntityTools.draw_image_3d(self.sprite, (0, -200, -10), (1000, 1000, 1), (0, 0, 0))
-    
-#         # for i in range(-10, 10):
-#         #     front_bg_pos = Vec(-camera_pos.x, 0) * 10 + Vec(1440 * i, 0)
-#         #     EntityTools.draw_image(self.front_pillar, front_bg_pos.unp(), self.pillar_size)
+    Floor()
+    Plane()
+    Player()
 
-#         # EntityTools.draw_image(self.vignette, camera_center.unp(), (view_size * 1.01).unp(), alpha=self.vignette_alpha)
-
-#         # EntityTools.draw_image_3d(self.sprite, (0 - camera_pos.x - view_size.x / 2, -50, -.5), (1080, 1080, 1), (pi / 2, 0, 0), (0,  camera_pos.y), program="def3d")
-#         # EntityTools.draw_image_3d(self.spr_body, (player.pos.x - camera_pos.x - view_size.x / 2, -player.pos.y - 40, -.5), (20, 20, 1), (0, 0, 0), (0,  camera_pos.y), program="def3d")
-        
-# player = Player((200, -100))
-# background = Background()
-# foreground = Foreground()
-# Block((100, 50), (10000, 100))
-
-# sw.start()
+    sw.run()

@@ -22,7 +22,6 @@ src/sweet/graphics/model.py
 src/sweet/graphics/shaders.py
 src/sweet/graphics/texture.py
 src/sweet/linalg/__init__.py
-src/sweet/linalg/collision.py
 src/sweet/linalg/pathing.py
 src/sweet/network/__init__.py
 src/sweet/network/client.py

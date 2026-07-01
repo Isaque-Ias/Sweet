@@ -1,6 +1,5 @@
 *.pyc
 .vscode/settings.json
-app/game.py
-app/inputting.py
 .vscode/tasks.json
 build/
+__pycache__/

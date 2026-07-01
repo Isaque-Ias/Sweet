@@ -9,7 +9,10 @@
     "pixel": "resources\\build\\pixel.png"
   },
   "models": {
-    "aviao": "resources\\Airplane.obj",
+    "plane": "resources\\Airplane.obj",
+    "player": "resources\\player.obj",
+    "player2": "resources\\player2.obj",
+    "floor": "resources\\floor.obj",
     "lixeira": "resources/lixo_transparente.obj"
   }
 }

@@ -5,13 +5,11 @@ from moderngl_window.context.base import BaseWindow
 from moderngl_window.context.base.keys import BaseKeys, KeyModifiers
 
 from pathlib import Path
-import pygame as pg
 from .graphics.shaders import ShaderRender, ShaderManager
 from .entity import EntityManager, Draw
 from .inputting import Input
 from PIL import Image
 from typing import Literal, cast
-from pygame.locals import * # type: ignore
 
 _from_string_format = Literal["P", "RGB", "RGBX", "RGBA", "ARGB", "BGRA"]
 delta_time = 0
@@ -149,10 +147,6 @@ class EngineWindow:
         for entity in entities:
             entities[entity].pos_tick()
               
-        layer_changes = EntityManager.get_layer_changes()
-        for key in layer_changes:
-            EntityManager.set_layer_change(*layer_changes[key])
-
         entity_changes = EntityManager.get_entity_changes()
         for key in entity_changes:
             EntityManager.create_entity(*entity_changes[key])
@@ -168,10 +162,8 @@ class EngineWindow:
             Draw.set_state_shader("__def__")
 
         entities = EntityManager.get_all_entities()
-        for order in entities.values():
-            for layer in order.values():
-                for entity in layer:
-                    entity.draw()
+        for entity in entities.values():
+            entity.draw()
 
         ShaderRender.render()
 
@@ -219,13 +211,6 @@ class GameLoop:
     def get_fullscreen(cls) -> bool:
         return cls._fullscreen
     
-    @staticmethod
-    def set_icon(icon: Image.Image) -> None:
-        data = icon.tobytes()
-        fmt = cast(_from_string_format, icon.mode)
-        surface = pg.image.fromstring(data, icon.size, fmt)
-        pg.display.set_icon(surface.convert())
-
     @classmethod
     def set_fullscreen(cls, value: bool) -> None:
         cls._fullscreen = value

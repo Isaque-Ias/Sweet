@@ -59,8 +59,6 @@ class Sprite:
     scale: tuple[float, float, float]
     rotation: tuple[float, float, float]
     color: tuple[float, float, float, float]
-    perspective: bool
-    static: bool
     shader: str
     attrs: dict[str, tuple[int | float, ...]]
 
@@ -70,7 +68,6 @@ class Geometry:
     ebo_data: np.ndarray
     index_count: int
     vao: moderngl.VertexArray | None = None
-
 @dataclass
 class Object:
     mesh: Geometry
