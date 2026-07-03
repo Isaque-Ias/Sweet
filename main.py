@@ -3,6 +3,9 @@ import sweet as sw
 from pathlib import Path
 from sweet.vector import Vec3
 
+cam = 0
+moon = 0
+
 class Floor(sw.Entity):
     def __init__(self):
         super().__init__((0, 0, 0), tick=True)
@@ -11,7 +14,8 @@ class Floor(sw.Entity):
     def draw(self):
         floor_texture = sw.Resources.texture("plane")
         floor_model = sw.Resources.model("floor")
-
+        global cam
+        sw.Shader.ubo(0, "uCamPos", "3f", *(cam.unp()))
         sw.entity.Draw.draw_image(
             floor_model,
             floor_texture,
@@ -114,10 +118,15 @@ class Player(sw.Entity):
         main_cam.angles = self.camera_angle
         main_cam.fov = self.fov
 
+        global cam, moon
+        cam = main_cam.pos + Vec3(800, 800, 0)
+        moon = main_cam.pos + Vec3(1000, 1000, 0)
+
     def draw(self):
         player_texture = sw.Resources.texture("plane")
         player_model = sw.Resources.model("player2")
-
+        global cam
+        sw.Shader.ubo(0, "uCamPos", "3f", *(cam.unp()))
         sw.entity.Draw.draw_image(
             player_model,
             player_texture,
@@ -149,7 +158,8 @@ class Plane(sw.Entity):
     def draw(self):
         plane_texture = sw.Resources.texture("plane")
         plane_model = sw.Resources.model("plane")
-
+        global cam
+        sw.Shader.ubo(0, "uCamPos", "3f", *(cam.unp()))
         sw.entity.Draw.draw_image(
             plane_model,
             plane_texture,
@@ -158,6 +168,26 @@ class Plane(sw.Entity):
             Vec3(0, 0, 0),
         )
 
+class Moon(sw.Entity):
+    def __init__(self):
+        super().__init__((10000, 10000, 0))
+        self.model = sw.Resources.model("moon")
+        self.texture = sw.Resources.texture("moon")
+
+    def tick(self):
+        pass
+        
+    def draw(self):
+        global cam
+        sw.Shader.ubo(0, "uCamPos", "3f", *(cam.unp()))
+        
+        sw.entity.Draw.draw_image(
+            self.model,
+            self.texture,
+            moon,
+            Vec3(100, 100, 100),
+            Vec3(0, 0, 0),
+        )
 
 if __name__ == "__main__":
     sw.Display.resizable(True)
@@ -174,5 +204,6 @@ if __name__ == "__main__":
     Floor()
     Plane()
     Player()
+    Moon()
 
     sw.run()

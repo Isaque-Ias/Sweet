@@ -6,13 +6,15 @@
     "front_pillar": "resources\\frontline.png",
     "floor": "resources\\floor.png",
     "plane": "resources\\Airplane Texture.png",
-    "pixel": "resources\\build\\pixel.png"
+    "pixel": "resources\\build\\pixel.png",
+    "moon": "resources\\moon_color.jpg"
   },
   "models": {
     "plane": "resources\\Airplane.obj",
     "player": "resources\\player.obj",
     "player2": "resources\\player2.obj",
     "floor": "resources\\floor.obj",
-    "lixeira": "resources/lixo_transparente.obj"
+    "lixeira": "resources/lixo_transparente.obj",
+    "moon": "resources/moon.obj"
   }
 }
