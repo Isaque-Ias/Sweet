@@ -1,6 +1,8 @@
 from moderngl_window.context.base import BaseWindow
 from moderngl_window.context.base.keys import BaseKeys
-import glfw
+import glfw  # type: ignore
+
+
 class Input:
     _mouse_pos: tuple[int, int] = (0, 0)
     _keys: dict[int, list[bool]] = {121: [False] * 3}
@@ -41,6 +43,10 @@ class Input:
     @classmethod
     def set_mouse_visibility(cls, visible: bool) -> None:
         cls.wnd.cursor = visible
+
+    @classmethod
+    def set_mouse_exclusivity(cls, exclusive: bool) -> None:
+        cls.wnd.mouse_exclusivity = exclusive
 
     @classmethod
     def process_key_event(cls, key: int, action: int, keys_enum: BaseKeys):
@@ -125,7 +131,8 @@ class Input:
     @classmethod
     def mouse_press(cls, key: int) -> bool:
         return cls._mouse[key][2]
-    
+
+
 # class InputListener:
 #     pressed_modifiers: set[keyboard.Key] = set()
 

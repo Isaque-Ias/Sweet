@@ -1,4 +1,4 @@
-import glfw
+import glfw  # type: ignore
 import moderngl_window as mglw
 from moderngl_window.timers.clock import Timer
 from moderngl_window.context.base import BaseWindow
@@ -8,15 +8,24 @@ from pathlib import Path
 from .graphics.shaders import ShaderRender, ShaderManager
 from .entity import EntityManager, Draw
 from .inputting import Input
-from PIL import Image
 from typing import Literal, cast
 
 _from_string_format = Literal["P", "RGB", "RGBX", "RGBA", "ARGB", "BGRA"]
 delta_time = 0
 
+
 class EngineWindow:
-    def __init__(self, title: str="[Sem Nome]", size: tuple[int, int]=(1280, 720), fullscreen: bool=False, borderless: bool=False, resizable: bool = False, color: tuple[float, float, float, float]=(0, 0, 0, 1), samples: int=4):
-        window_cls = mglw.get_window_cls('moderngl_window.context.glfw.Window')
+    def __init__(
+        self,
+        title: str = "[Sem Nome]",
+        size: tuple[int, int] = (1280, 720),
+        fullscreen: bool = False,
+        borderless: bool = False,
+        resizable: bool = False,
+        color: tuple[float, float, float, float] = (0, 0, 0, 1),
+        samples: int = 4,
+    ):
+        window_cls = mglw.get_window_cls("moderngl_window.context.glfw.Window")
         self.wnd = window_cls(
             title=title,
             gl_version=(3, 3),
@@ -25,25 +34,25 @@ class EngineWindow:
             fullscreen=fullscreen,
             samples=samples,
             borderless=borderless,
-            vsync=False
+            vsync=False,
         )
-        
+
         self.color = color
         self.ctx = self.wnd.ctx
         self.keys: BaseKeys = cast(BaseKeys, self.wnd.keys)
         Input.key_code = self.keys
-        
+
         self.wnd.resize_func = self._on_resize
         self.wnd.key_event_func = self._on_key_event
         self.wnd.mouse_press_event_func = self._on_mouse_press
         self.wnd.mouse_release_event_func = self._on_mouse_release
         self.wnd.mouse_position_event_func = self._on_mouse_move
         self.wnd.mouse_scroll_event_func = self._on_mouse_scroll
-        
-        glfw.set_window_focus_callback(self.wnd._window, self._on_focus_change) # type: ignore
+
+        glfw.set_window_focus_callback(self.wnd._window, self._on_focus_change)  # type: ignore
 
         mglw.activate_context(window=self.wnd)
-        
+
         self.timer = Timer()
         self.timer.start()
 
@@ -69,15 +78,18 @@ class EngineWindow:
     def toggle_cursor(self):
         self.wnd.cursor = not self.wnd.cursor
 
+    def toggle_mouse_exclusivity(self):
+        self.wnd.mouse_exclusivity = not self.wnd.mouse_exclusivity
+
     def center(self):
         monitor = glfw.get_primary_monitor()
         if not monitor:
             return
-            
-        video_mode = glfw.get_video_mode(monitor) # type: ignore
+
+        video_mode = glfw.get_video_mode(monitor)  # type: ignore
         screen_w = video_mode.size.width
         screen_h = video_mode.size.height
-        
+
         win_w, win_h = self.size
         self.position = ((screen_w - win_w) // 2, (screen_h - win_h) // 2)
 
@@ -115,11 +127,11 @@ class EngineWindow:
         DELTA_TIME = 1.0 / TICK_PER_SECOND
 
         accumulator = 0.0
-        
+
         while not self.wnd.is_closing:
-            #current, delta
+            # current, delta
             _, delta_time = self.timer.next_frame()
-            
+
             accumulator += delta_time
 
             while accumulator >= DELTA_TIME:
@@ -127,13 +139,13 @@ class EngineWindow:
                 accumulator -= DELTA_TIME
 
             self.ctx.clear(*self.color)
-            
+
             self.render()
-            
+
             self.wnd.swap_buffers()
-            
+
         self.wnd.destroy()
-        
+
     def update(self, dt: float):
         global delta_time
         delta_time = dt
@@ -146,7 +158,7 @@ class EngineWindow:
         entities = EntityManager.get_tick_entities(2)
         for entity in entities:
             entities[entity].pos_tick()
-              
+
         entity_changes = EntityManager.get_entity_changes()
         for key in entity_changes:
             EntityManager.create_entity(*entity_changes[key])
@@ -167,21 +179,23 @@ class EngineWindow:
 
         ShaderRender.render()
 
+
 def get_window_data() -> tuple[int, int]:
     if glfw.init():
         monitor = glfw.get_primary_monitor()
         if monitor:
-            video_mode = glfw.get_video_mode(monitor) # type: ignore
-            
+            video_mode = glfw.get_video_mode(monitor)  # type: ignore
+
             view_width: int = video_mode.size.width
             view_height: int = video_mode.size.height
         else:
             view_width, view_height = 1280, 720
-            
+
         glfw.terminate()
     else:
         view_width, view_height = 1280, 720
     return view_width, view_height
+
 
 class GameLoop:
     _title: str = "[Sem Nome]"
@@ -210,7 +224,7 @@ class GameLoop:
     @classmethod
     def get_fullscreen(cls) -> bool:
         return cls._fullscreen
-    
+
     @classmethod
     def set_fullscreen(cls, value: bool) -> None:
         cls._fullscreen = value
@@ -259,23 +273,23 @@ class GameLoop:
     @classmethod
     def get_screen_size(cls) -> tuple[int, int]:
         return cls._screen_size
-    
+
     @classmethod
     def init(cls) -> None:
         window = EngineWindow(
-            title=cls._title, 
-            size=cls._screen_size, 
+            title=cls._title,
+            size=cls._screen_size,
             fullscreen=cls._fullscreen,
             borderless=cls._borderless,
             resizable=cls._resizable,
             color=cls._color,
-            samples=4
+            samples=4,
         )
 
         cls._game_window = window
-        glfw.focus_window(window.wnd._window) # type: ignore
+        glfw.focus_window(window.wnd._window)  # type: ignore
         Input.wnd = window.wnd
-        
+
         BASE_DIR = Path(__file__).resolve().parent
         BUILD = BASE_DIR / "build"
         ShaderManager.set_context(window.ctx)
@@ -291,6 +305,7 @@ class GameLoop:
         cls._fps = 60
 
         cls._game_window.run()
+
 
 if __name__ == "__main__":
     GameLoop.start()
