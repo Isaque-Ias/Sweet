@@ -1,0 +1,8 @@
+{
+  "textures": {
+    "chomik": "temp\\russo\\resources\\textures\\chomik.png"
+  },
+  "models": {
+    "chomik": "temp\\russo\\resources\\source\\chomik.obj"
+  }
+}
