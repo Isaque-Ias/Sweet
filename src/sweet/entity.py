@@ -198,8 +198,8 @@ class Draw:
         model: ModelInstance,
         image: Imaging | None,
         pos: Vec3,
-        scale: Vec3,
-        angle: Vec3,
+        scale: Vec3 = Vec3(1, 1, 1),
+        angle: Vec3 = Vec3(0, 0, 0),
         color: tuple[int | float, int | float, int | float, int | float] = (
             255,
             255,
