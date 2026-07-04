@@ -22,7 +22,7 @@ class Floor(sw.Entity):
 
 class Airplane(sw.Entity):
     def __init__(self):
-        super().__init__((0, 0, 0), tick=True)
+        super().__init__((0, 0, 0))
         self.pos = Vec3(0, 0, 0)
 
         self.texture = sw.Resources.texture("airplane")
@@ -68,7 +68,7 @@ class Cube(sw.Entity):
 
 class CubeMatrix(sw.Entity):
     def __init__(self, pos: Vec3 = Vec3(0, 0, 0), size: int = 8):
-        super().__init__((0, 0, 0), tick=True)
+        super().__init__((0, 0, 0))
         self.pos = pos
 
         self.size = size

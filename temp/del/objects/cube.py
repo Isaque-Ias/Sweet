@@ -7,9 +7,8 @@ class Cube(SandboxObject):
         self,
         pos: sw.Vec3 = sw.Vec3(0, 0, 0),
         parent: SandboxObject | None = None,
-        tick: bool = False,
     ):
-        super().__init__(pos, parent, tick=tick)
+        super().__init__(pos, parent)
 
         self.texture = sw.Resources.texture("cube")
         self.model = sw.Resources.model("cube")
@@ -22,7 +21,7 @@ class WalkingCube(Cube):
         parent: SandboxObject | None = None,
         speed: sw.Vec3 = sw.Vec3(0, 0, 0),
     ):
-        super().__init__(pos, parent, tick=True)
+        super().__init__(pos, parent)
 
         self.speed: sw.Vec3 = speed
 

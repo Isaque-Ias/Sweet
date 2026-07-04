@@ -6,7 +6,7 @@ from sweet.inputting import Input
 
 class Player(sw.Entity):
     def __init__(self):
-        super().__init__((0, 0, 0), tick=True)
+        super().__init__((0, 0, 0))
         self.pos: Vec3
         self.camera_angle = Vec3(0, 0, 0)
         self.mouse_x, self.mouse_y = Input.get_mouse_pos()
