@@ -1,0 +1,8 @@
+{
+    "resources": {
+        "importing": {
+            "report": true,
+            "replace_old_assets": true
+        }
+    }
+}

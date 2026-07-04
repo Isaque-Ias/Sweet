@@ -753,6 +753,21 @@ class ShaderManager:
         ShaderModels.set_context(ctx)
 
     @classmethod
+    def load_json_shaders(cls, json_path: str | Path) -> None:
+        absolute_path = solve_path(json_path)
+        with open(absolute_path, "r") as file:
+            data = json.load(file)
+
+        data = data.get("shaders")
+
+        if data:
+            for name, shader_info in data.items():
+                vertex_path = shader_info.get("vertex")
+                fragment_path = shader_info.get("fragment")
+                if vertex_path and fragment_path:
+                    cls.add_shader(name, vertex_path, fragment_path)
+
+    @classmethod
     def add_shader(cls, name: str, path_vertex: str | Path, path_fragment: str | Path) -> Shader:
         absolute_vertex = solve_path(path_vertex)
         absolute_fragment = solve_path(path_fragment)
@@ -1035,7 +1050,6 @@ class ShaderRender:
 
                     if not instance_buffer is None and not instance_ssbo is None:
                         buffer_data = cls.create_instance_buffer(objects, instance_ssbo)
-
                         instance_buffer.write(buffer_data)
                         instance_buffer.bind_to_storage_buffer(instance_ssbo.binding)
 

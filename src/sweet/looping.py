@@ -149,19 +149,15 @@ class EngineWindow:
     def update(self, dt: float):
         global delta_time
         delta_time = dt
-        entities = EntityManager.get_tick_entities(0)
-        for entity in entities:
-            entities[entity].pre_tick()
-        entities = EntityManager.get_tick_entities(1)
-        for entity in entities:
-            entities[entity].tick()
-        entities = EntityManager.get_tick_entities(2)
-        for entity in entities:
-            entities[entity].pos_tick()
+        entities = EntityManager.get_all_entities()
+        for entity in entities.values():
+            entity.pre_tick()
+            entity.tick()
+            entity.pos_tick()
 
         entity_changes = EntityManager.get_entity_changes()
         for key in entity_changes:
-            EntityManager.create_entity(*entity_changes[key])
+            EntityManager.create_entity(entity_changes[key])
 
         destroy_changes = EntityManager.get_destroy_changes()
         for key in destroy_changes.keys():

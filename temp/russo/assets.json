@@ -1,8 +1,14 @@
 {
   "textures": {
-    "chomik": "temp\\russo\\resources\\models\\textures\\chomik.png"
+    "hand": "temp\\russo\\resources\\assets\\textures\\hand.png"
   },
   "models": {
-    "chomik": "temp\\russo\\resources\\models\\source\\chomik.obj"
+    "hand": "temp\\russo\\resources\\assets\\source\\hand.obj"
+  },
+  "shaders": {
+    "panini": {
+      "vertex": "temp\\russo\\resources\\shaders\\panini.vsh",
+      "fragment": "temp\\russo\\resources\\shaders\\panini.fsh"
+    }
   }
 }

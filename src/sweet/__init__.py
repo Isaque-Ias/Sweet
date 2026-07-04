@@ -1,6 +1,7 @@
 from sweet.graphics.texture import Imaging # type: ignore
-from sweet.vector import Vec2, Vec3 # type: ignore
+from sweet.vector import Vec3 # type: ignore
 from pathlib import Path
+from sweet.graphics.model import ModelInstance
 import moderngl
 
 from . import (
@@ -13,6 +14,8 @@ from . import (
     looping, # type: ignore
     network, # type: ignore
     path_solver, # type: ignore
+    system, # type: ignore
+    vector, # type: ignore
 )
 
 def init():
@@ -29,20 +32,14 @@ def run():
 class Entity(entity.Entity):
     def __init__(
                 self,
-                pos: tuple[int, int] | tuple[int, int, int] = (0, 0),
-                scale: tuple[int, int] | tuple[int, int, int] = (1, 1),
-                angle: float | tuple[float, float, float] = 0,
-                pre_tick: bool = False,
-                tick: bool = False,
-                pos_tick: bool = False
+                pos: tuple[int, int, int] = (0, 0, 0),
+                scale: tuple[int, int, int] = (1, 1, 1),
+                angle: tuple[float, float, float] = (0, 0, 0)
             ):
         super().__init__(
                 pos,
                 scale,
-                angle,
-                pre_tick,
-                tick,
-                pos_tick
+                angle
         )
 
 class Resources:
@@ -50,6 +47,7 @@ class Resources:
     def load_assets(path: str | Path):
         graphics.texture.Texture.load_json_textures(path)
         graphics.model.Model.load_json_models(path)
+        graphics.shaders.ShaderManager.load_json_shaders(path)
     
     @staticmethod
     def texture(name: str):
@@ -61,13 +59,16 @@ class Resources:
 
 class Shader:
     @staticmethod
+    def get(name: str):
+        return graphics.shaders.ShaderManager.get_shader(name)
+    
+    @staticmethod
     def use(name: str):
         entity.Draw.set_state_shader(name)
 
     @staticmethod
     def add(path_vertex: str | Path, path_fragment: str | Path, name: str | None=None):
         if name is None:
-            # Extracts the file name of the vertex shaders without the extension
             path_str = str(path_vertex)
             name = path_str.split("/")[-1].split(".")[0]
             
@@ -120,4 +121,20 @@ class Display:
     def title(text: str) -> None:
         looping.GameLoop.set_title(text)
     
+class Draw:
+    @staticmethod
+    def render(model: ModelInstance,
+        image: Imaging | None,
+        pos: Vec3,
+        scale: Vec3 = Vec3(1, 1, 1),
+        angle: Vec3 = Vec3(0, 0, 0),
+        color: tuple[int | float, int | float, int | float, int | float] = (255,255,255,255)
+        ):
+        entity.Draw.draw_image(model, image, pos, scale, angle, color)
+
+class System:
+    @staticmethod
+    def set_config(path: str | Path) -> None:
+        system.System.config = path
+
 __all__ = ["Resources", "Display"]

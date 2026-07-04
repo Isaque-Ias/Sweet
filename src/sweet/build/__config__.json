@@ -1,0 +1,10 @@
+{
+    "resources": {
+        "importing": {
+            "report": true,
+            "replace_old_assets": "__default__",
+            "fallback_texture": "__default__",
+            "fallback_model": "__default__"
+        }
+    }
+}

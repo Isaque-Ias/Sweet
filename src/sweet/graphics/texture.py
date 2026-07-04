@@ -3,10 +3,12 @@ import uuid
 from .shaders import ShaderTexture
 from ..common import *
 from ..path_solver import solve_path
+from ..system import System
 import OpenGL.GL as gl # type: ignore
 import json
 from pathlib import Path
 from collections.abc import Callable
+
 class Texture:
     _atlas_size = ShaderTexture.get_atlas_size()
     _textures: dict[str, "Imaging"] = {}
@@ -22,46 +24,87 @@ class Texture:
                 for key in textures.keys():
                     path = textures[key]
                     absolute_path = solve_path(path)
-                    cls.set_texture(key, absolute_path)
+
+                    cls.resolve_file(key, absolute_path)
+
+    @classmethod
+    def resolve_file(cls, name: str, path: Path) -> "Imaging":
+        if not cls._textures.get(name) is None:
+            report_config = System.config.resources.importing.report
+            config = System.config.resources.importing.replace_old_assets
+            if config == "__default__":
+                raise KeyError(f"Textura com chave '{name}' já existe. Para substituir, habilite a opção 'replace_old_assets' nas configurações")
+                
+            elif config == True:
+                if report_config == True:
+                    print(f"Textura com chave '{name}' já existe. Substituindo pela nova textura...")
+                return cls.set_texture(name, path)
+
+            elif config == False:
+                return cls.get_texture(name)
+        
+        return cls.set_texture(name, path)
+
+    @staticmethod
+    def get_fallback_path():
+        config = System.config.resources.importing.fallback_texture
+        if config == "__default__":
+            BASE = Path(__file__).parent
+            fallback_path = BASE.parent / "build" / "__fallback__.png"
+        else:
+            fallback_path = solve_path(config)
+            if not fallback_path.exists():
+                raise FileNotFoundError(f"Textura de fallback não encontrada em: {fallback_path}")
+
+        return fallback_path
 
     @classmethod
     def set_texture(cls, name: str, path: Path) -> "Imaging":
-        if not cls._textures.get(name) == None:
-            raise KeyError
+        if not path.exists():
+            report_config = System.config.resources.importing.report
+            if report_config:
+                print("Textura não encontrada: '" + str(name) + "' no caminho: " + str(path))
+            path = cls.get_fallback_path()
 
-        elif path.suffix in [".png", ".jpg", ".jpeg"]:
-            surface: Image.Image = Image.open(path)
-
-            file_type = FileType.BATCH
-            if max(surface.width, surface.height) > 1024:
-                file_type = FileType.BACKGROUND
-
-            cls._textures[name] = Imaging(name, surface, file_type, gl.GL_RGBA, uuid.uuid4().hex)  # type: ignore
+        if path.suffix in [".png", ".jpg", ".jpeg"]:
+            cls._textures[name] = cls.open_file(name, path)
             cls._textures[name].upload()
             return cls._textures[name]
 
         else:
-            raise FileNotFoundError
+            raise FileNotFoundError(f"Não há suporte para texturas com o formato '{path.suffix}'")
 
     @classmethod
-    def link_texture(cls, image: "Imaging", name: str, new_name: str) -> None:
-        cls.delete_texture(name)
-        cls._textures[new_name] = image
+    def open_file(cls, name: str, path: Path, missing: bool=False) -> "Imaging":
+        surface: Image.Image = Image.open(path)
+
+        file_type = FileType.BATCH
+        if max(surface.width, surface.height) > 1024:
+            file_type = FileType.BACKGROUND
+
+        occupation = uuid.uuid4().hex
+        if missing:
+            occupation = "__missing__"
+        return Imaging(name, surface, file_type, gl.GL_RGBA, occupation)  # type: ignore
 
     @classmethod
     def get_texture(cls, name: str) -> "Imaging":
         if cls._textures.get(name) is None:
-            raise KeyError(
-                f"Texture '{name}' not found. Have you loaded the assets.json file?"
-            )
+            report_config = System.config.resources.importing.report
+            if report_config:
+                print(f"Textura não encontrada: '{name}'")
+            path = cls.get_fallback_path()
+            file = cls.open_file(name, path, True)
+            file.upload()
+            return file
         return cls._textures[name]
 
     @classmethod
     def delete_texture(cls, name: str) -> None:
         if cls._textures.get(name) is None:
-            raise KeyError(
-                f"Texture '{name}' not found. Have you loaded the assets.json file?"
-            )
+            report_config = System.config.resources.importing.report
+            if report_config:
+                print(f"Textura com o nome '{name}' não existe")
         del cls._textures[name]
 
 
