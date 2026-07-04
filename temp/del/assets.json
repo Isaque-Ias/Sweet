@@ -1,10 +1,12 @@
 {
     "textures": {
-        "floor": "temp\\del\\resources\\textures\\airplane.png",
+        "cube": "temp\\del\\resources\\textures\\cube.png",
+        "floor": "temp\\del\\resources\\textures\\floor.png",
         "airplane": "temp\\del\\resources\\textures\\airplane.png",
-        "player": "temp\\del\\resources\\textures\\airplane.png"
+        "player": "temp\\del\\resources\\textures\\player.png"
     },
     "models": {
+        "cube": "temp\\del\\resources\\source\\cube.obj",
         "floor": "temp\\del\\resources\\source\\floor.obj",
         "airplane": "temp\\del\\resources\\source\\airplane.obj",
         "player": "temp\\del\\resources\\source\\player.obj"

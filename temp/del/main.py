@@ -24,7 +24,7 @@ class Floor(sw.Entity):
 
 class Player(sw.Entity):
     def __init__(self):
-        super().__init__((0, 0, 200), tick=True)
+        super().__init__((0, 0, 0), tick=True)
         self.pos: Vec3
         self.camera_angle = Vec3(0, 0, 0)
         self.mouse_x, self.mouse_y = Input.get_mouse_pos()
@@ -33,6 +33,7 @@ class Player(sw.Entity):
         self.player_height = 1
         self.velocity = Vec3(0, 0, 0)
 
+        self.third_person = True
         self.cam_distance = 4.0
         self.cam_height = 2.0
         self.cam_shoulder = 1.6
@@ -44,6 +45,10 @@ class Player(sw.Entity):
         Input.set_mouse_exclusivity(True)
 
     def tick(self):
+        # --- toggle third person ---
+        if Input.is_key_pressed(Input.key_code.F5):
+            self.third_person = not self.third_person
+            
         # --- mouse look ---
         mouse_x, mouse_y = Input.get_mouse_pos()
         mouse_dx = mouse_x - self.mouse_x
@@ -59,46 +64,53 @@ class Player(sw.Entity):
         self.pos += self.velocity
 
         self.pos.y = max(self.pos.y, self.player_height)
-        if Input.get_pressed(Input.key_code.SPACE) and self.pos.y <= self.player_height:
+        if (
+            Input.is_key_pressed(Input.key_code.SPACE)
+            and self.pos.y <= self.player_height
+        ):
             self.velocity.y = 20
 
         # --- horizontal movement (relative to camera yaw) ---
         yaw = math.radians(self.camera_angle.x)
         pitch = math.radians(self.camera_angle.y)
 
-        if Input.get_press(Input.key_code.W):
+        if Input.is_key_held(Input.key_code.W):
             self.pos.x -= math.sin(yaw) * self.speed
             self.pos.z -= math.cos(yaw) * self.speed
-        if Input.get_press(Input.key_code.S):
+        if Input.is_key_held(Input.key_code.S):
             self.pos.x += math.sin(yaw) * self.speed
             self.pos.z += math.cos(yaw) * self.speed
-        if Input.get_press(Input.key_code.A):
+        if Input.is_key_held(Input.key_code.A):
             self.pos.x -= math.cos(yaw) * self.speed
             self.pos.z += math.sin(yaw) * self.speed
-        if Input.get_press(Input.key_code.D):
+        if Input.is_key_held(Input.key_code.D):
             self.pos.x += math.cos(yaw) * self.speed
             self.pos.z -= math.sin(yaw) * self.speed
 
-        if Input.get_press(Input.key_code.Q):
+        if Input.is_key_held(Input.key_code.Q):
             self.fov += 1
-        if Input.get_press(Input.key_code.E):
+        if Input.is_key_held(Input.key_code.E):
             self.fov -= 1
 
         # --- shoulder camera ---
-        # forward = Vec3(math.sin(yaw), 0, math.cos(yaw))
-        right = Vec3(math.cos(yaw), 0, -math.sin(yaw))
+        if self.third_person:
+            # forward = Vec3(math.sin(yaw), 0, math.cos(yaw))
+            right = Vec3(math.cos(yaw), 0, -math.sin(yaw))
 
-        look_dir = Vec3(
-            math.sin(yaw) * math.cos(pitch),
-            math.sin(pitch),
-            math.cos(yaw) * math.cos(pitch),
-        )
+            look_dir = Vec3(
+                math.sin(yaw) * math.cos(pitch),
+                math.sin(pitch),
+                math.cos(yaw) * math.cos(pitch),
+            )
 
-        cam_pos = self.pos
-        cam_pos += Vec3(0, self.cam_height, 0)
-        right_dist = right * self.cam_shoulder
-        back_dist = look_dir * self.cam_distance
-        cam_pos += right_dist + back_dist
+            cam_pos = self.pos
+            cam_pos += Vec3(0, self.cam_height, 0)
+            right_dist = right * self.cam_shoulder
+            back_dist = look_dir * self.cam_distance
+            cam_pos += right_dist + back_dist
+        else:
+            cam_pos = self.pos
+            cam_pos += Vec3(0, self.player_height, 0)
 
         main_cam = sw.camera.CameraManager.get_main_camera()
         main_cam.pos = cam_pos
@@ -106,11 +118,12 @@ class Player(sw.Entity):
         main_cam.fov = self.fov
 
     def draw(self):
-        sw.entity.Draw.draw_image(
-            self.model,
-            self.texture,
-            self.pos,
-        )
+        if self.third_person:
+            sw.entity.Draw.draw_image(
+                self.model,
+                self.texture,
+                self.pos,
+            )
 
 
 class Airplane(sw.Entity):
@@ -122,17 +135,17 @@ class Airplane(sw.Entity):
         self.model = sw.Resources.model("airplane")
 
     def tick(self):
-        if Input.get_press(Input.key_code.I):
+        if Input.is_key_held(Input.key_code.I):
             self.pos.y -= 1
-        if Input.get_press(Input.key_code.J):
+        if Input.is_key_held(Input.key_code.J):
             self.pos.x -= 1
-        if Input.get_press(Input.key_code.K):
+        if Input.is_key_held(Input.key_code.K):
             self.pos.y += 1
-        if Input.get_press(Input.key_code.L):
+        if Input.is_key_held(Input.key_code.L):
             self.pos.x += 1
-        if Input.get_press(Input.key_code.N):
+        if Input.is_key_held(Input.key_code.N):
             self.pos.z += 1
-        if Input.get_press(Input.key_code.M):
+        if Input.is_key_held(Input.key_code.M):
             self.pos.z -= 1
 
     def draw(self):
@@ -141,6 +154,55 @@ class Airplane(sw.Entity):
             self.texture,
             Vec3(self.pos.x, self.pos.y, self.pos.z),
         )
+
+
+class Cube(sw.Entity):
+    def __init__(self, pos: Vec3 = Vec3(0, 0, 0)):
+        super().__init__((0, 0, 0))
+        self.pos = pos
+
+        self.texture = sw.Resources.texture("cube")
+        self.model = sw.Resources.model("cube")
+
+    def draw(self):
+        sw.entity.Draw.draw_image(
+            self.model,
+            self.texture,
+            Vec3(self.pos.x, self.pos.y, self.pos.z),
+        )
+
+
+class CubeMatrix(sw.Entity):
+    def __init__(self, pos: Vec3 = Vec3(0, 0, 0), size: int = 8):
+        super().__init__((0, 0, 0), tick=True)
+        self.pos = pos
+
+        self.size = size
+        self.gap = 2
+
+        self.texture = sw.Resources.texture("cube")
+        self.model = sw.Resources.model("cube")
+
+    def tick(self):
+        if Input.is_key_held(Input.key_code.R):
+            self.size = min(16, self.size + 1)
+        if Input.is_key_held(Input.key_code.F):
+            self.size = max(1, self.size - 1)
+
+    def draw(self):
+        for x in range(-self.size, self.size + 1):
+            for y in range(-self.size, self.size + 1):
+                for z in range(-self.size, self.size + 1):
+                    pos = Vec3(
+                        self.pos.x + x * (self.gap + 1),
+                        self.pos.y + y * (self.gap + 1),
+                        self.pos.z + z * (self.gap + 1),
+                    )
+                    sw.entity.Draw.draw_image(
+                        self.model,
+                        self.texture,
+                        pos,
+                    )
 
 
 if __name__ == "__main__":
@@ -156,8 +218,11 @@ if __name__ == "__main__":
     sw.Resources.load_assets(PROJECT / "assets.json")
     BUILD = CWD / "src" / "sweet" / "build"
 
-    Floor()
-    Airplane()
+    # Floor()
+    # Airplane()
+
+    CubeMatrix()
+
     Player()
 
     sw.run()

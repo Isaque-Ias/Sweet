@@ -100,36 +100,36 @@ class Input:
         return cls._keys
 
     @classmethod
-    def get_pressed(cls, key: int) -> bool:
+    def is_key_pressed(cls, key: int) -> bool:
         if cls._keys.get(key) == None:
             cls._keys[key] = [False] * 3
 
         return cls._keys[key][0]
 
     @classmethod
-    def get_released(cls, key: int) -> bool:
+    def is_key_released(cls, key: int) -> bool:
         if cls._keys.get(key) == None:
             cls._keys[key] = [False] * 3
 
         return cls._keys[key][1]
 
     @classmethod
-    def get_press(cls, key: int) -> bool:
+    def is_key_held(cls, key: int) -> bool:
         if cls._keys.get(key) == None:
             cls._keys[key] = [False] * 3
 
         return cls._keys[key][2]
 
     @classmethod
-    def mouse_pressed(cls, key: int) -> bool:
+    def is_mouse_pressed(cls, key: int) -> bool:
         return cls._mouse[key][0]
 
     @classmethod
-    def mouse_released(cls, key: int) -> bool:
+    def is_mouse_released(cls, key: int) -> bool:
         return cls._mouse[key][1]
 
     @classmethod
-    def mouse_press(cls, key: int) -> bool:
+    def is_mouse_held(cls, key: int) -> bool:
         return cls._mouse[key][2]
 
 
