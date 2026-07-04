@@ -12,11 +12,9 @@ class SandboxObject(sw.Entity):
         self,
         pos: sw.Vec3,
         parent: "SandboxObject | None" = None,
-        tick: bool = False,
     ):
         super().__init__(
             (int(pos.x), int(pos.y), int(pos.z)),
-            tick=tick,
         )
         self.pos: sw.Vec3  # This should not be needed
         self.parent: "SandboxObject | None" = parent
