@@ -1,5 +1,4 @@
 *.pyc
-.vscode/settings.json
-.vscode/tasks.json
-build/
+.vscode/
+/build/
 __pycache__/
