@@ -2,9 +2,9 @@ from moderngl_window.context.base import BaseWindow
 from moderngl_window.context.base.keys import BaseKeys
 import glfw  # type: ignore
 
-
 class Input:
     _mouse_pos: tuple[int, int] = (0, 0)
+    _mouse_delta: tuple[int, int] = (0, 0)
     _keys: dict[int, list[bool]] = {121: [False] * 3}
     _input: bool = False
     _focus: bool = False
@@ -32,13 +32,24 @@ class Input:
         return cls._focus
 
     @classmethod
+    def update_mouse_pos(cls, x: int, y: int):
+        cls._mouse_pos = (x, y)
+
+    @classmethod
+    def update_mouse_delta(cls, dx: int, dy: int) -> None:
+        cls._mouse_delta = (dx, dy)
+
+    @classmethod
     def set_mouse_pos(cls, x: int, y: int) -> None:
         glfw.set_cursor_pos(cls.wnd._window, x, y)  # type: ignore
-        cls._mouse_pos = (x, y)
 
     @classmethod
     def get_mouse_pos(cls) -> tuple[int, int]:
         return cls._mouse_pos
+
+    @classmethod
+    def get_mouse_delta(cls) -> tuple[int, int]:
+        return cls._mouse_delta
 
     @classmethod
     def set_mouse_visibility(cls, visible: bool) -> None:
@@ -67,7 +78,7 @@ class Input:
             cls._keys[key][2] = False
 
     @classmethod
-    def process_mouse_button_event(cls, button: int, action: int, keys_enum: BaseKeys):
+    def process_mouse_event(cls, button: int, action: int, keys_enum: BaseKeys):
         button_str = button + 1
 
         if button_str not in cls._mouse:
@@ -85,15 +96,6 @@ class Input:
             if cls._mouse[button_str][2]:
                 cls._mouse[button_str][1] = True
             cls._mouse[button_str][2] = False
-
-    @classmethod
-    def clear_frame_deltas(cls):
-        for key in cls._keys:
-            cls._keys[key][0] = False
-            cls._keys[key][1] = False
-        for btn in cls._mouse:
-            cls._mouse[btn][0] = False
-            cls._mouse[btn][1] = False
 
     @classmethod
     def get_keys(cls):

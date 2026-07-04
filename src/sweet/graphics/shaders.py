@@ -14,6 +14,10 @@ from pathlib import Path
 from numpy.typing import NDArray
 from ctypes import create_string_buffer
 import moderngl
+@dataclass
+class BufferInfo:
+    buffer: moderngl.Buffer
+    capacity: int 
 
 @dataclass
 class Attribute:
@@ -815,7 +819,7 @@ class ShaderRender:
     _viewsize: tuple[int, int, int, int] = (0, 0, 0, 0)
     _fov = 70
     built = False
-    buffer_map: dict[str, dict[int, moderngl.Buffer]] = {}
+    buffer_map: dict[str, dict[int, BufferInfo]] = {}
     batches: dict[str, dict[str | None, dict[str, list[Sprite]]]] = defaultdict(lambda: defaultdict(lambda: defaultdict(list))) # type: ignore
     ubo_data: dict[int, dict[str, dict[str, tuple[int | float, ...] | str]]] = {}
     ssbo_data: dict[int, dict[str, dict[str, tuple[int | float, ...] | str]]] = {}
@@ -990,7 +994,11 @@ class ShaderRender:
                     cls.buffer_map[shader_name] = {}
 
                 if cls.buffer_map[shader_name].get(ubo.binding) is None:
-                    cls.buffer_map[shader_name][ubo.binding] = cls._ctx.buffer(reserve=ubo.size)
+                    size = ubo.size
+                    cls.buffer_map[shader_name][ubo.binding] = BufferInfo(
+                        buffer=cls._ctx.buffer(reserve=size),
+                        capacity=size
+                    )
 
                 ubo_buffer = cls.buffer_map[shader_name][ubo.binding]
 
@@ -1014,8 +1022,8 @@ class ShaderRender:
                         data_value = cls.ubo_data[ubo.binding][var_name]["value"]
                         buffer_data.extend(struct.pack(data_type, *data_value))
                 
-                ubo_buffer.write(buffer_data)
-                ubo_buffer.bind_to_uniform_block(ubo.binding)
+                ubo_buffer.buffer.write(buffer_data)
+                ubo_buffer.buffer.bind_to_uniform_block(ubo.binding)
             
             instance_buffer = None
             instance_ssbo = None
@@ -1025,12 +1033,15 @@ class ShaderRender:
                         cls.buffer_map[shader_name] = {}
 
                     if cls.buffer_map[shader_name].get(ssbo.binding) is None:
-                        cls.buffer_map[shader_name][ssbo.binding] = cls._ctx.buffer(reserve=ssbo.size)
+                        initial_size = ssbo.size
+                        cls.buffer_map[shader_name][ssbo.binding] = BufferInfo(
+                            buffer=cls._ctx.buffer(reserve=initial_size),
+                            capacity=initial_size
+                        )
 
                     instance_buffer = cls.buffer_map[shader_name][ssbo.binding]
                     instance_ssbo = ssbo
                     break
-
 
             for texture_name, mesh_dict in texture_dict.items():
                 if not texture_name is None:
@@ -1049,9 +1060,26 @@ class ShaderRender:
                         mesh.vao = ShaderModels.bind_model(program, prog_info.introspection.geometry_layout, mesh)
 
                     if not instance_buffer is None and not instance_ssbo is None:
+                        bytes_per_instance = instance_ssbo.size
+                        required_size = bytes_per_instance * len(objects)
+
+                        current_buffer = instance_buffer.buffer
+                        current_capacity = instance_buffer.capacity
+
+                        if required_size > current_capacity:
+                            new_capacity = current_capacity
+                            while new_capacity < required_size:
+                                new_capacity *= 2
+                            
+                            current_buffer.release()
+                            current_buffer = cls._ctx.buffer(reserve=new_capacity)
+                            
+                            instance_buffer.buffer = current_buffer
+                            instance_buffer.capacity = new_capacity
+
                         buffer_data = cls.create_instance_buffer(objects, instance_ssbo)
-                        instance_buffer.write(buffer_data)
-                        instance_buffer.bind_to_storage_buffer(instance_ssbo.binding)
+                        instance_buffer.buffer.write(buffer_data)
+                        instance_buffer.buffer.bind_to_storage_buffer(instance_ssbo.binding)
 
                     mesh.vao.render(mode=moderngl.TRIANGLES, instances=len(objects))
 

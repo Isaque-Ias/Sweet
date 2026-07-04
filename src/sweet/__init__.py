@@ -132,6 +132,36 @@ class Draw:
         ):
         entity.Draw.draw_image(model, image, pos, scale, angle, color)
 
+class Input:
+    @staticmethod
+    def is_key_held(key: int) -> bool:
+        return inputting.Input.is_key_held(key)
+
+    @staticmethod
+    def is_key_pressed(key: int) -> bool:
+        return inputting.Input.is_key_pressed(key)
+
+    @staticmethod
+    def is_key_released(key: int) -> bool:
+        return inputting.Input.is_key_released(key)
+
+    @staticmethod
+    def is_mouse_held(key: int) -> bool:
+        return inputting.Input.is_mouse_held(key)
+
+    @staticmethod
+    def is_mouse_pressed(key: int) -> bool:
+        return inputting.Input.is_mouse_pressed(key)
+
+    @staticmethod
+    def is_mouse_released(key: int) -> bool:
+        return inputting.Input.is_mouse_released(key)
+
+class Time:
+    @staticmethod
+    def delta():
+        return looping.GameLoop.get_window().delta_time
+
 class System:
     @staticmethod
     def set_config(path: str | Path) -> None:

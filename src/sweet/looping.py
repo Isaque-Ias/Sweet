@@ -11,8 +11,6 @@ from .inputting import Input
 from typing import Literal, cast
 
 _from_string_format = Literal["P", "RGB", "RGBX", "RGBA", "ARGB", "BGRA"]
-delta_time = 0
-
 
 class EngineWindow:
     def __init__(
@@ -55,6 +53,7 @@ class EngineWindow:
 
         self.timer = Timer()
         self.timer.start()
+        self.delta_time = 0
 
     @property
     def size(self):
@@ -94,17 +93,17 @@ class EngineWindow:
         self.position = ((screen_w - win_w) // 2, (screen_h - win_h) // 2)
 
     def _on_mouse_press(self, x: int, y: int, button: int):
-        Input.process_mouse_button_event(button, self.keys.ACTION_PRESS, self.keys)
+        Input.process_mouse_event(button, self.keys.ACTION_PRESS, self.keys)
 
     def _on_mouse_release(self, x: int, y: int, button: int):
-        Input.process_mouse_button_event(button, self.keys.ACTION_RELEASE, self.keys)
+        Input.process_mouse_event(button, self.keys.ACTION_RELEASE, self.keys)
 
     def _on_resize(self, width: int, height: int):
         self.ctx.viewport = (0, 0, width, height)
 
     def _on_mouse_move(self, x: int, y: int, dx: int, dy: int):
-        Input.set_mouse_pos(x, y)
-        pass
+        Input.update_mouse_pos(x, y)
+        Input.update_mouse_delta(dx, dy)
 
     def _on_key_event(self, key: int, action: int, modifiers: KeyModifiers):
         Input.process_key_event(key, action, self.keys)
@@ -129,7 +128,6 @@ class EngineWindow:
         accumulator = 0.0
 
         while not self.wnd.is_closing:
-            # current, delta
             _, delta_time = self.timer.next_frame()
 
             accumulator += delta_time
@@ -147,8 +145,7 @@ class EngineWindow:
         self.wnd.destroy()
 
     def update(self, dt: float):
-        global delta_time
-        delta_time = dt
+        self.delta_time = dt
         entities = EntityManager.get_all_entities()
         for entity in entities.values():
             entity.pre_tick()
@@ -208,6 +205,10 @@ class GameLoop:
     debug_time: bool = False
     _gl_version = (3, 3)
     _game_window: EngineWindow
+
+    @classmethod
+    def get_window(cls):
+        return cls._game_window
 
     @classmethod
     def set_can_fullscreen(cls, value: bool) -> None:

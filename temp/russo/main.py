@@ -30,7 +30,7 @@ class Player(sw.Entity):
         self.camera_angle = Vec3(0, 0, 0)
         self.mouse_x, self.mouse_y = Input.get_mouse_pos()
         self.fov = 70
-        self.speed = 1
+        self.speed = 10
         self.player_height = 1
         self.velocity = Vec3(0, 0, 0)
 
@@ -76,17 +76,17 @@ class Player(sw.Entity):
         pitch = math.radians(self.camera_angle.y)
 
         if Input.is_key_held(Input.key_code.W):
-            self.pos.x -= math.sin(yaw) * self.speed
-            self.pos.z -= math.cos(yaw) * self.speed
+            self.pos.x -= math.sin(yaw) * self.speed * sw.Time.delta()
+            self.pos.z -= math.cos(yaw) * self.speed * sw.Time.delta()
         if Input.is_key_held(Input.key_code.S):
-            self.pos.x += math.sin(yaw) * self.speed
-            self.pos.z += math.cos(yaw) * self.speed
+            self.pos.x += math.sin(yaw) * self.speed * sw.Time.delta()
+            self.pos.z += math.cos(yaw) * self.speed * sw.Time.delta()
         if Input.is_key_held(Input.key_code.A):
-            self.pos.x -= math.cos(yaw) * self.speed
-            self.pos.z += math.sin(yaw) * self.speed
+            self.pos.x -= math.cos(yaw) * self.speed * sw.Time.delta()
+            self.pos.z += math.sin(yaw) * self.speed * sw.Time.delta()
         if Input.is_key_held(Input.key_code.D):
-            self.pos.x += math.cos(yaw) * self.speed
-            self.pos.z -= math.sin(yaw) * self.speed
+            self.pos.x += math.cos(yaw) * self.speed * sw.Time.delta()
+            self.pos.z -= math.sin(yaw) * self.speed * sw.Time.delta()
 
         if Input.is_key_held(Input.key_code.Q):
             self.fov += 1
@@ -126,6 +126,21 @@ class Player(sw.Entity):
                 self.pos,
             )
 
+class Floor(sw.Entity):
+    def __init__(self):
+        super().__init__((0, -100, 0))
+        self.texture = sw.Resources.texture("hand")
+        self.model = sw.Resources.model("hand")
+
+    def draw(self):
+        sw.Draw.render(
+            self.model,
+            self.texture,
+            self.pos,
+            scale=Vec3(100, 100, 100)
+        )
+
 if __name__ == "__main__":
     Player()
+    Floor()
     sw.run()
