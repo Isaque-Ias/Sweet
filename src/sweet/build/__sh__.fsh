@@ -17,6 +17,9 @@ void main()
     float ambientStrength = 0.25;
 
     vec4 texColor = texture(sw_texture, v_texcoord) * v_color;
+    if (texColor.a < 0.9) {
+        discard;
+    }
     vec3 ambient = ambientStrength * lightColor;
 
     vec3 norm = normalize(v_normal);

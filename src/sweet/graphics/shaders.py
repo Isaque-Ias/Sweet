@@ -14,6 +14,13 @@ from pathlib import Path
 from numpy.typing import NDArray
 from ctypes import create_string_buffer
 import moderngl
+
+@dataclass
+class FrameBuffer:
+    texture: moderngl.Texture
+    buffer: moderngl.Framebuffer
+    components: int
+
 @dataclass
 class BufferInfo:
     buffer: moderngl.Buffer
@@ -130,7 +137,10 @@ class ShaderModels:
     @classmethod
     def bind_model(cls, shader: moderngl.Program, geometry_layout: list[Attribute], model: Geometry):
         ctx_vbo = cls._ctx.buffer(model.vbo_data)
-        ctx_ebo = cls._ctx.buffer(model.ebo_data)
+        
+        ctx_ebo = None
+        if model.ebo_data is not None:
+            ctx_ebo = cls._ctx.buffer(model.ebo_data)
 
         attr_types: str = ""
         attr_names: list[str] = []
@@ -138,13 +148,14 @@ class ShaderModels:
             attr_types = attr_types + cls.get_moderngl_format(attr.type_name) + " "
             attr_names.append(attr.name)
         attr_types = attr_types[:-1]
-
+        
         vao = cls._ctx.vertex_array( # type: ignore
             shader,
             [(ctx_vbo, attr_types, *attr_names)],
             index_buffer=ctx_ebo,
-            index_element_size=4
+            index_element_size=4 if ctx_ebo is not None else 0
         )
+        
         return vao
     
 class Atlas:
@@ -323,14 +334,23 @@ class ShaderTexture:
         cls._ctx = ctx
 
     @classmethod
-    def create_fbo(cls, size: tuple[int, int], depth: bool=False) -> moderngl.Framebuffer:
-        fbo_texture = cls._ctx.texture(size, 3)
+    def create_fbo(cls, size: tuple[int, int], depth: bool=False, components: int=4) -> FrameBuffer:
+        fbo_texture = cls._ctx.texture(size, components)
 
         fbo_depth = None
         if depth:
-            fbo_depth = cls._ctx.depth_renderbuffer(size)
+            fbo_depth = cls._ctx.depth_texture(size)
+            # fbo_depth = cls._ctx.depth_renderbuffer(size)
 
-        return cls._ctx.framebuffer(color_attachments=[fbo_texture], depth_attachment=fbo_depth)
+        fbo = cls._ctx.framebuffer(color_attachments=[fbo_texture], depth_attachment=fbo_depth)
+
+        frame = FrameBuffer(
+            texture=fbo_texture,
+            buffer=fbo,
+            components=components
+        )
+
+        return frame
 
     @classmethod
     def get_atlas_size(cls):
@@ -830,7 +850,7 @@ class ShaderRender:
         cls._instance_ssbo = cls._ctx.buffer(reserve=4 * 1024 * 1024)
         cls._camera_ubo = cls._ctx.buffer(reserve=128 + 4 + 4 + 4)
         cls._ctx.enable(moderngl.DEPTH_TEST)
-        # cls._ctx.enable(moderngl.CULL_FACE)
+        # cls._ctx.disable(moderngl.CULL_FACE)
 
     @classmethod
     def set_frame_buffer(cls, frame_buffer: moderngl.Framebuffer | None, depth_test: bool=True, clear_color: tuple[float, float, float, float]=(0, 0, 0, 1)):
@@ -1056,8 +1076,8 @@ class ShaderRender:
                     mesh = ShaderModels.get_model(mesh_name)
                     if not mesh: continue
 
-                    if not mesh.vao:
-                        mesh.vao = ShaderModels.bind_model(program, prog_info.introspection.geometry_layout, mesh)
+                    if mesh.vao.get(shader_name) is None:
+                        mesh.vao[shader_name] = ShaderModels.bind_model(program, prog_info.introspection.geometry_layout, mesh)
 
                     if not instance_buffer is None and not instance_ssbo is None:
                         bytes_per_instance = instance_ssbo.size
@@ -1081,7 +1101,7 @@ class ShaderRender:
                         instance_buffer.buffer.write(buffer_data)
                         instance_buffer.buffer.bind_to_storage_buffer(instance_ssbo.binding)
 
-                    mesh.vao.render(mode=moderngl.TRIANGLES, instances=len(objects))
+                    mesh.vao[shader_name].render(mode=moderngl.TRIANGLES, instances=len(objects))
 
         cls.batches = defaultdict(lambda: defaultdict(lambda: defaultdict(list))) # type: ignore
         

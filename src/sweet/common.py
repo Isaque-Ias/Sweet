@@ -65,9 +65,9 @@ class Sprite:
 @dataclass
 class Geometry:
     vbo_data: np.ndarray
-    ebo_data: np.ndarray
-    index_count: int
-    vao: moderngl.VertexArray | None = None
+    ebo_data: np.ndarray | None = None
+    index_count: int = 0
+    vao: dict[str, moderngl.VertexArray] = field(default_factory=lambda: {})
 @dataclass
 class Object:
     mesh: Geometry

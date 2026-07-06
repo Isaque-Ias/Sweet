@@ -300,7 +300,7 @@ class GameLoop:
     @classmethod
     def start(cls) -> None:
         cls._fps = 60
-
+        ShaderManager.set_shader("__def__")
         cls._game_window.run()
 
 

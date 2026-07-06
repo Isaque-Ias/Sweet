@@ -59,6 +59,10 @@ class Resources:
 
 class Shader:
     @staticmethod
+    def current():
+        return graphics.shaders.ShaderManager.get_current_shader()
+
+    @staticmethod
     def get(name: str):
         return graphics.shaders.ShaderManager.get_shader(name)
     
@@ -75,8 +79,8 @@ class Shader:
         return graphics.shaders.ShaderManager.add_shader(name, path_vertex, path_fragment)
 
     @staticmethod
-    def new_fbo(size: tuple[int, int]) -> moderngl.Framebuffer:
-        return graphics.shaders.ShaderTexture.create_fbo(size)
+    def new_fbo(size: tuple[int, int], depth: bool=False, components: int=4):
+        return graphics.shaders.ShaderTexture.create_fbo(size, depth, components)
     
     @staticmethod
     def use_frame(fbo: moderngl.Framebuffer | None, depth_test: bool=True, clear_color: tuple[float, float, float, float]=(0, 0, 0, 1)):
