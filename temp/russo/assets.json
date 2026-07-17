@@ -1,6 +1,7 @@
 {
   "textures": {
-    "hand": "temp\\russo\\resources\\assets\\textures\\hand.png"
+    "hand": "temp\\russo\\resources\\assets\\textures\\hand.png",
+    "hand2": "temp\\russo\\resources\\assets\\textures\\wfihwrng.jpg"
   },
   "models": {
     "hand": "temp\\russo\\resources\\assets\\source\\hand.obj"

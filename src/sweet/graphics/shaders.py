@@ -870,6 +870,8 @@ class ShaderRender:
         x, y, width, height = cls._ctx.screen.viewport
         cls._viewsize = x, y, width, height
         cls._fov = fov
+        width = 1920
+        height = 1080
 
         cls._projections["perspective"] = cls.create_perspective(
             cls._fov,
@@ -995,7 +997,13 @@ class ShaderRender:
 
         if cls._viewsize != cls._ctx.screen.viewport or cls._fov != curr_camera.fov:
             cls.update_projections(curr_camera.fov)
-        projection_matrix = cls._projections["perspective"]
+
+        projection_matrix = cls.create_perspective(
+            70,
+            1920 / 1080,
+            0.1,
+            100000.0
+        )
 
         angle_mapping: tuple[float, float, float] = (
             np.radians(-curr_camera.angles.y),
