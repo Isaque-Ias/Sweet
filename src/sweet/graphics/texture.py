@@ -1,8 +1,8 @@
 from PIL import Image, ImageEnhance
 import uuid
-from .shaders import ShaderTexture
+from .shading import ShaderTexture
 from ..common import *
-from ..path_solver import solve_path
+from ..system import System
 from ..system import System
 import OpenGL.GL as gl # type: ignore
 import json
@@ -23,7 +23,7 @@ class Texture:
                 textures = assets[asset_type]
                 for key in textures.keys():
                     path = textures[key]
-                    absolute_path = solve_path(path)
+                    absolute_path = System.solve_path(path)
 
                     cls.resolve_file(key, absolute_path)
 
@@ -37,7 +37,7 @@ class Texture:
                 
             elif config == True:
                 if report_config == True:
-                    print(f"Textura com chave '{name}' já existe. Substituindo pela nova textura...")
+                    System.warn(f"Textura com chave '{name}' já existe. Substituindo pela nova textura...")
                 return cls.set_texture(name, path)
 
             elif config == False:
@@ -52,7 +52,7 @@ class Texture:
             BASE = Path(__file__).parent
             fallback_path = BASE.parent / "build" / "__fallback__.png"
         else:
-            fallback_path = solve_path(config)
+            fallback_path = System.solve_path(config)
             if not fallback_path.exists():
                 raise FileNotFoundError(f"Textura de fallback não encontrada em: {fallback_path}")
 
@@ -63,7 +63,7 @@ class Texture:
         if not path.exists():
             report_config = System.config.resources.importing.report
             if report_config:
-                print("Textura não encontrada: '" + str(name) + "' no caminho: " + str(path))
+                System.warn("Textura não encontrada: '" + str(name) + "' no caminho: " + str(path))
             path = cls.get_fallback_path()
 
         if path.suffix in [".png", ".jpg", ".jpeg"]:
@@ -92,7 +92,7 @@ class Texture:
         if cls._textures.get(name) is None:
             report_config = System.config.resources.importing.report
             if report_config:
-                print(f"Textura não encontrada: '{name}'")
+                System.warn(f"Textura não encontrada: '{name}'")
             path = cls.get_fallback_path()
             file = cls.open_file(name, path, True)
             file.upload()
@@ -104,9 +104,8 @@ class Texture:
         if cls._textures.get(name) is None:
             report_config = System.config.resources.importing.report
             if report_config:
-                print(f"Textura com o nome '{name}' não existe")
+                System.warn(f"Textura com o nome '{name}' não existe")
         del cls._textures[name]
-
 
 class Imaging:
     def __init__(

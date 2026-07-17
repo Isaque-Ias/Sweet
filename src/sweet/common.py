@@ -1,6 +1,6 @@
 from enum import Enum, auto
 from dataclasses import dataclass, field
-from .vector import Vec2
+from .vector import Vec2, Vec3
 import numpy as np
 import moderngl
 
@@ -52,12 +52,21 @@ class CollisionData:
     entity: object
 
 @dataclass
+class Transform:
+    pos: Vec3 = field(default_factory=lambda: Vec3(0, 0, 0))
+    scale: Vec3 = field(default_factory=lambda: Vec3(1, 1, 1))
+    angle: Vec3 = field(default_factory=lambda: Vec3(0, 0, 0))
+
+@dataclass
+class FrameTransform:
+    current: Transform
+    alpha: Transform
+
+@dataclass
 class Sprite:
     model: str
     texture: UVLocation | None
-    pos: tuple[float, float, float]
-    scale: tuple[float, float, float]
-    rotation: tuple[float, float, float]
+    transform: FrameTransform
     color: tuple[float, float, float, float]
     shader: str
     attrs: dict[str, tuple[int | float, ...]]

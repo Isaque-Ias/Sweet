@@ -1,23 +1,46 @@
 from .vector import Vec3
-from dataclasses import dataclass
 
-@dataclass
 class Camera:
-    name: str
-    pos: Vec3
-    angles: Vec3
-    fov: float
+    def __init__(self, name: str, pos: Vec3 = Vec3(0, 0, 0), angle: Vec3 = Vec3(0, 0, 0), fov: float = 60.0, near: float = 0.1, far: float = 1000.0):
+        self.name = name
+        self.pos = pos
+        self.angle = angle
+        self.fov = fov
+        self.far = far
+        self.near = near
+
+        self.alpha_pos = pos
+        self.alpha_angle = angle
+        self.alpha_fov = fov
+
+    def lerp_pos(self, alpha: float):
+        return self.pos * alpha + self.alpha_pos * (1 - alpha)
+
+    def lerp_angle(self, alpha: float):
+        return self.angle * alpha + self.alpha_angle * (1 - alpha)
+
+    def lerp_fov(self, alpha: float):
+        return self.fov * alpha + self.alpha_fov * (1 - alpha)
 
 class CameraManager:
-    _cams: dict["str", Camera] = {"main": Camera("main", Vec3(0, 0, -1), Vec3(0, 0, 0), 70.0)}
+    _cams: dict["str", Camera] = {
+        "main": Camera(name="main")
+    }
     _main: str = "main"
+
+    @classmethod
+    def update_camera_lerp(cls):
+        for camera in cls._cams.values():
+            camera.alpha_pos = Vec3(*camera.pos)
+            camera.alpha_angle = Vec3(*camera.angle)
+            camera.alpha_fov = camera.fov
 
     @classmethod
     def create_cam(cls, name: str) -> Camera:
         if cls._cams.get(name):
             raise KeyError
         
-        cam = Camera(name, Vec3(0, 0, -1), Vec3(0, 0, 0), 70.0)
+        cam = Camera(name=name)
         cls._cams[name] = cam
         return cam
     

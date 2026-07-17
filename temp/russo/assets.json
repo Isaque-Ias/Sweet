@@ -1,14 +1,31 @@
 {
-  "textures": {
-    "hand": "temp\\russo\\resources\\assets\\textures\\hand.png"
-  },
-  "models": {
-    "hand": "temp\\russo\\resources\\assets\\source\\hand.obj"
-  },
-  "shaders": {
-    "panini": {
-      "vertex": "temp\\russo\\resources\\shaders\\panini.vsh",
-      "fragment": "temp\\russo\\resources\\shaders\\panini.fsh"
+  "resources": [
+    {
+      "type": "texture",
+      "name": "stone_diffuse",
+      "file": "textures/stone.png"
+    },
+    {
+      "type": "shader",
+      "name": "aiai",
+      "vertex": "textures/stone.png",
+      "fragment": "textures/stone.png"
+    },
+    {
+      "type": "mesh",
+      "name": "mega_cube",
+      "file": "textures/stone.png",
+      "materials": [
+        "stone_diffuse"
+      ]
+    },
+    {
+      "type": "scene",
+      "name": "cena_foda",
+      "file": "textures/stone.png",
+      "override_materials": {
+        "Wall_Mesh": "stone_diffuse"
+      }
     }
-  }
+  ]
 }

@@ -1,7 +1,10 @@
+from colorama import init, Fore
 from typing import Any
 from pathlib import Path
 import json
-from .path_solver import solve_path
+from pathlib import Path
+
+init(autoreset=True)
 
 class ConfigObject:
     def __init__(self, data: dict[str, Any], fallback_data: dict[str, Any] | None = None):
@@ -41,6 +44,28 @@ class SysMeta(type):
         cls._config_path = Path(__file__).parent / "build" / "__config__.json"
         cls._config_map = None
 
+    @staticmethod
+    def success(message: Any):
+        print(f"{Fore.GREEN}{message}")
+
+    @staticmethod
+    def warn(message: Any):
+        print(f"{Fore.YELLOW}{message}")
+
+    @staticmethod
+    def problem(message: Any):
+        print(f"{Fore.RED}{message}")
+
+    @staticmethod
+    def solve_path(path: str | Path) -> Path:
+        if isinstance(path, Path):
+            return path
+        
+        norm_path = Path(path.replace("\\", "/"))
+        absolute_path = Path.cwd() / norm_path
+
+        return absolute_path
+
     @classmethod
     def load_fallback_data(cls) -> dict[str, Any]:
         BASE = Path(__file__).parent
@@ -63,14 +88,14 @@ class SysMeta(type):
     
     @classmethod
     def _load_config(cls, path: Path | str, fallback: dict[str, Any]) -> ConfigObject:
-        path = solve_path(path)
-        try:
-            with open(path, "r") as file:
-                config_json = json.load(file)
-
-        except FileNotFoundError:
-            print(f"Config file not found at path: {path}. Using default configuration.")
+        solved_path = cls.solve_path(path)
+        
+        if not solved_path.exists():
             config_json = cls.load_fallback_data()
+            System.warn(f"Arquivo de configuração em: {path} não encontrado. Utilizando configuração padrão.")
+        else:
+            with open(solved_path, "r") as file:
+                config_json = json.load(file)
 
         return ConfigObject(config_json, fallback_data=fallback)
 

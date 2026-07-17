@@ -22,7 +22,7 @@ class SandboxObject(sw.Entity):
         if parent is not None:
             parent.children.append(self)
 
-        self.model: sw.graphics.model.ModelInstance = sw.Resources.model("cube")
+        self.model: sw.graphics.mesh.Mesh = sw.Resources.model("cube")
         self.texture: sw.graphics.texture.Imaging = sw.Resources.texture("cube")
 
     def draw(self):
