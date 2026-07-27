@@ -3,36 +3,42 @@ requires = ["setuptools>=61"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools.package-data]
-"sweet.build" = ["*"]
+"sweet.core.system" = ["*.json"]
+"sweet.resource.graphics.passes" = ["*"]
+"sweet.resource.assets.defaults" = ["*"]
 
 [project]
 name = "sweet"
 version = "0.1.0"
 description = "Game Development Module"
 authors = [
-    { name="Isaque-Ias" }
+    { name="Isaque-Ias", "DelNailo" }
 ]
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
+    # Setup
+    "setuptools>=61.0.0",
+
     # Rendering
-    "moderngl>=5.12.0",          
+    "moderngl>=5.12.0",
     "moderngl-window>=3.1.1",
     "pyopengl==3.1.10",
     "glfw==2.10.0",
-    
-    # Data and Calculations
-    "numpy>=2.1.0",             
-    "pyglm>=2.8.3",             
-    "trimesh>=4.4.0",        
-    
-    # Media Processing
-    "pillow>=10.4.0",           
+
+    # Data
+    "numpy>=2.1.0",
+    "pyglm>=2.8.3",
+
+    # Mesh processing
+    "trimesh>=4.7.0",
+
+    # glTF
+    "pygltflib>=1.16.0",
+
+    # Images
+    "pillow>=10.4.0",
+
+    # Computer Vision
     "opencv-python>=4.10.0.0",
-    
-    # --- Cleaned Up/Removed ---
-    # "pygame==2.6.1"
-    # "pynput==1.8.1"
-    # "pyperclip==1.9.0"
-    # "imageio==2.37.2"
 ]
