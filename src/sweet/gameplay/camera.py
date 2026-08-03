@@ -45,7 +45,8 @@ class Camera:
 
     def view_matrix(self) -> glm.mat4x4:
         transform = glm.translate(glm.mat4(1), self.position.unp()) # type: ignore
-        transform *= glm.mat4_cast(self.rotation.convert(RotationModel.QUATERNION)) # type: ignore
+        rotation_values = (self.rotation).convert(RotationModel.QUATERNION).values
+        transform *= glm.mat4_cast((rotation_values).unp()) # type: ignore
 
         return glm.inverse(transform) # type: ignore
 

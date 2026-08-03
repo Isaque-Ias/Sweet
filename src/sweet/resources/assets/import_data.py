@@ -69,7 +69,7 @@ class MaterialData:
     structural_parameters: StructuralParameters = field(default_factory=StructuralParameters)
 
 @dataclass
-class MeshData:
+class PrimitiveData:
     positions: BufferData | None
     normals: BufferData | None
     tangents: BufferData | None
@@ -82,6 +82,10 @@ class MeshData:
     # targets: list[float] | None
     mode: int
     material: int | None
+
+@dataclass
+class MeshData:
+    primitives: list[PrimitiveData] = field(default_factory=lambda: [])
     name: str = "[Modelo sem nome]"
 
 @dataclass
@@ -131,3 +135,8 @@ class SceneData:
     textures: dict[int, TextureData] = field(default_factory=lambda: {})
     materials: dict[int, MaterialData] = field(default_factory=lambda: {})
     name: str = "[Cena sem nome]"
+
+@dataclass
+class ShaderData:
+    vertex: str
+    fragment: str

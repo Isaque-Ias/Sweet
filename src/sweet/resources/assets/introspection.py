@@ -1,7 +1,7 @@
 from ctypes import create_string_buffer
 import numpy as np
 import OpenGL.GL as gl
-from .common import Attribute, Introspection, DataBlock
+from ...graphics.moderngl.common import Attribute, Introspection, DataBlock
 
 class Introspect:
     _GL_TYPE_MAPPING: dict[int, tuple[str, int]] = {

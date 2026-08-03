@@ -1,7 +1,12 @@
+from __future__ import annotations
 import glm
 from enum import Enum, auto
-from abc import ABC
+from sweet.plataform.display.manager import DisplaySurface
 from ...core import system
+from typing import Any, Optional, TYPE_CHECKING
+from ...plataform.hal.manager import RenderTarget
+if TYPE_CHECKING:
+    from ..scene import Scene
 
 class UpdatePolicy(Enum):
     EVERY_FRAME = auto()
@@ -9,24 +14,46 @@ class UpdatePolicy(Enum):
     ON_DEMAND = auto()
     ONCE = auto()
 
-class Target(ABC):
-    pass
-
 class View:
-    def __init__(self, update_policy: UpdatePolicy = UpdatePolicy.ON_DEMAND) -> None:
-        self.update_policy = update_policy
+    def __init__(self, update_policy: UpdatePolicy = UpdatePolicy.ON_DEMAND, **kwargs: Any) -> None:
+        self._total_ticks: int = kwargs.get("tick", 0)
+        self._update_policy = update_policy
         self._demanding: bool = False
-        self._view: glm.mat4
-        self._projection: glm.mat4
+        self._view: Optional[glm.mat4] = None
+        self._projection: Optional[glm.mat4] = None
+        self._surface: Optional[DisplaySurface] = None
 
         self._active: bool = False
-        self._target: Target | None = None
+        self._target: Optional[RenderTarget] = None
+        self._scene: Optional[Scene] = None
+        self._viewport: Optional[tuple[int, int, int, int]] = None
         self._updated: bool = False
-
+    
         self._tick: int = 0
-        self._total_ticks: int = 0
 
         ViewManager.add_view(self)
+
+    def get_viewport(self):
+        return self._viewport
+
+    def set_viewport(self, value: tuple[int, int, int, int]):
+        self._viewport = value
+
+    def get_target(self) -> tuple[Optional[RenderTarget], Optional[DisplaySurface]]:
+        return self._target, self._surface
+
+    def get_scene(self):
+        return self._scene
+
+    def set_target(self, target: RenderTarget | DisplaySurface):
+        if isinstance(target, DisplaySurface):
+            self._surface = target
+            self._target = target.render_target
+        else:
+            self._target = target
+
+    def set_scene(self, scene: Scene):
+        self._scene = scene
 
     @property
     def projection(self):
@@ -44,12 +71,10 @@ class View:
     def view(self, view: glm.mat4x4):
         self._view = view
 
-    @property
-    def update_policy(self):
+    def get_update_policy(self):
         return self._update_policy
     
-    @update_policy.setter
-    def update_policy(self, policy: UpdatePolicy, tick: int | None = None):
+    def set_update_policy(self, policy: UpdatePolicy, **kwargs: Any):
         self._update_policy: UpdatePolicy = policy
         if policy == UpdatePolicy.ONCE:
             self._updated = False
@@ -57,6 +82,7 @@ class View:
             self._updated = True
 
         elif policy == UpdatePolicy.EVERY_N_TICKS:
+            tick = kwargs.get("tick", 0)
             if tick is None or tick <= 0:
                 tick = 1
 
@@ -64,6 +90,11 @@ class View:
             self._tick = 0
 
     def tick(self):
+        if self._total_ticks <= 0:
+            return
+        
+        if self._demanding: return
+        
         self._tick += 1
         if self._tick >= self._total_ticks:
             self._demanding = ViewManager.add_demand(self)
@@ -76,7 +107,7 @@ class View:
         self._active = False
 
     def is_active(self):
-        self._active = False
+        return self._active
 
     def should_update(self):
         if self._update_policy == UpdatePolicy.EVERY_FRAME:
@@ -99,10 +130,9 @@ class View:
 
         self._demanding = ViewManager.add_demand(self)
 
-    def render(self):
-        self.clear_demand()
-
     def clear_demand(self):
+        if self._update_policy == UpdatePolicy.EVERY_FRAME:
+            return
         ViewManager.clear_demand(self)
         self._demanding = False
 
@@ -115,8 +145,7 @@ class ViewManager:
         if view in cls._demands:
             system.warn("Demanda de visão chamada antes da conclusão de chamada anterior")
             return False
-
-        cls._views.append(view)
+        cls._demands.append(view)
         return True
 
     @classmethod
@@ -140,7 +169,7 @@ class ViewManager:
     def get_tick_views(cls) -> list["View"]:
         views: list["View"] = []
         for view in cls._views:
-            if view.update_policy == UpdatePolicy.EVERY_N_TICKS:
+            if view.get_update_policy() == UpdatePolicy.EVERY_N_TICKS and view.is_active():
                 views.append(view)
 
         return views

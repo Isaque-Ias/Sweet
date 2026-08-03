@@ -8,6 +8,10 @@ class Scene:
         self._name = name
         self._active = False
 
+    def print_tree(self):
+        for entity in self._entities:
+            print(entity.flatten_outline)
+
     def activate(self):
         self._active = True
         SceneManager.activate_scene(self)

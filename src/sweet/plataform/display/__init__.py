@@ -1,1 +1,1 @@
-from . import manager, implementation # type: ignore
+from . import manager, window # type: ignore

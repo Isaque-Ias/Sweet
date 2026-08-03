@@ -1,3 +1,4 @@
 {
-    "render": "GLCONTEXT"
+    "HAL": "MODERNGL",
+    "DISPLAY": "MODERNGL"
 }

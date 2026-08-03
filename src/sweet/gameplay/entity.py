@@ -1,10 +1,18 @@
+import inspect
 from ..core.linalg.vector import Vec3
 from ..core.linalg.rotation import Rotation, RotationModel
-from typing import Sequence, Callable
+from typing import Sequence, Callable, Any, Optional
 from ..core import system
 from ..resources.common import TRS
 from .camera import Camera
 from ..graphics.upload import GPUHandle
+
+class GameModel:
+    def __init__(self):
+        pass
+
+    def main(self):
+        pass
 
 class Entity:
     def __init__(self, name: str, children: list["Entity"] | None = None, parent: "Entity | None" = None):
@@ -15,6 +23,7 @@ class Entity:
         
         self._parents: list[Entity] = []
         self._depth = 0
+        self._mesh: Optional[str] = None
 
         self._transform = TRS(
             position = Vec3(0, 0, 0),
@@ -35,6 +44,9 @@ class Entity:
     def set_mesh_component(self, pointer: GPUHandle) -> None:
         if pointer.defined:
             self._mesh = pointer.key
+
+    def get_mesh(self) -> str | None:
+        return self._mesh
 
     @property
     def camera(self):
@@ -120,8 +132,7 @@ class Entity:
 
         for child in children:
             if child.name in existing_names:
-                system.warn(f"Nó '{child.name}' já pertence a essa entidade")
-                continue
+                child.name = child.name + " (cópia)"
             
             if child._parent is not None and child._parent is not self:
                 child._parent.dettach_children(child)
@@ -213,8 +224,23 @@ class Entity:
     def is_root(self) -> bool:
         return True if self._depth == 0 else False
 
-    def attach_script(self, script: Callable[..., None]):
+    def attach_main_script(self, script: Callable[..., None]):
         self._script = script
+
+    def inherit_model(self, model_class: type[GameModel], *args: list[Any], **kwargs: dict[str, Any]):
+        model_instance = model_class(*args, **kwargs)
+        
+        for name, value in model_instance.__dict__.items():
+            setattr(self, name, value)
+            
+        for name, attr in inspect.getmembers(model_class, predicate=inspect.isfunction):
+            if name.startswith("__") and name.endswith("__"):
+                continue
+
+            self.attach_main_script(model_instance.main)
+                
+            bound_method = attr.__get__(self, Entity)
+            setattr(self, name, bound_method)
 
     def get_script(self):
         return self._script

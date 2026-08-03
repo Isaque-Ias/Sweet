@@ -1,4 +1,4 @@
-from .vector import VectorLike, Vec3
+from .vector import VectorLike, Vec3, VecN
 from enum import Enum
 
 class RotationModel(Enum):
@@ -8,7 +8,7 @@ class RotationModel(Enum):
     VECTOR = ...
 
 class Rotation:
-    values: VectorLike
+    values: VecN
     model: RotationModel
 
     def __init__(self, values: VectorLike = Vec3(), model: RotationModel = RotationModel.VECTOR) -> None: ...

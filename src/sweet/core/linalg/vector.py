@@ -114,6 +114,11 @@ class Vec(ABC):
             raise IndexError("Index fora da lista.")
         return self.scalars[index]
 
+    def __setitem__(self, index: int, value: float) -> None:
+        if not (0 <= index < self.dim):
+            raise IndexError("Index fora da lista.")
+        self.scalars[index] = float(value)
+
     def __repr__(self) -> str:
         return f"{self.scalars}"
 

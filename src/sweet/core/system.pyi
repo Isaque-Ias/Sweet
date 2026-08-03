@@ -20,7 +20,8 @@ class EnvConfig:
     def load_from_dict(self, data: dict[str, Any]) -> None: ...
 
 class EngineConfig:
-    render: str
+    HAL: str
+    DISPLAY: str
     def load_from_dict(self, data: dict[str, Any]) -> None: ...
 
 class State:

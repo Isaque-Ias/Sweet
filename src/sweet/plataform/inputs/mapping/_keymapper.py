@@ -4,7 +4,7 @@ from .input_codes import Key, MouseButton
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:
-    from ...display.implementation.window import Window
+    from ...display.window.glfw import GLWindow
 
 class GenericMapper(ABC):
     @abstractmethod
@@ -19,7 +19,7 @@ class GlfwKeyMapper(GenericMapper):
     def __init__(self):
         pass
 
-    def set_keys(self, window: Window):
+    def set_keys(self, window: GLWindow):
         if not window.wnd:
             raise AttributeError("Mapeador GLFW precisa que a janela esteja instanciada")
         self.base_keys = window.wnd.keys
@@ -27,6 +27,30 @@ class GlfwKeyMapper(GenericMapper):
         self._KEY_MAP: dict[int, Key] = {
             self.base_keys.A: Key.A,
             self.base_keys.B: Key.B,
+            self.base_keys.C: Key.C,
+            self.base_keys.D: Key.D,
+            self.base_keys.E: Key.E,
+            self.base_keys.F: Key.F,
+            self.base_keys.G: Key.G,
+            self.base_keys.H: Key.H,
+            self.base_keys.I: Key.I,
+            self.base_keys.J: Key.J,
+            self.base_keys.K: Key.K,
+            self.base_keys.L: Key.L,
+            self.base_keys.M: Key.M,
+            self.base_keys.N: Key.N,
+            self.base_keys.O: Key.O,
+            self.base_keys.P: Key.P,
+            self.base_keys.Q: Key.Q,
+            self.base_keys.R: Key.R,
+            self.base_keys.S: Key.S,
+            self.base_keys.T: Key.T,
+            self.base_keys.U: Key.U,
+            self.base_keys.V: Key.V,
+            self.base_keys.W: Key.W,
+            self.base_keys.X: Key.X,
+            self.base_keys.Y: Key.Y,
+            self.base_keys.Z: Key.Z,
             self.base_keys.SPACE: Key.SPACE,
             self.base_keys.ESCAPE: Key.ESCAPE,
             self.base_keys.CAPS_LOCK: Key.CAPS_LOCK,

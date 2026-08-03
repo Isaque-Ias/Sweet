@@ -49,6 +49,21 @@ class ImportManager:
     }
 
     @staticmethod
+    def load_shaders(path_vertex: str | Path, path_fragment: str | Path) -> ShaderData:
+        absolute_vertex = system.solve_path(path_vertex)
+        absolute_fragment = system.solve_path(path_fragment)
+        with open(absolute_vertex, "r") as file:
+            VERTEX_SHADER = file.read()
+        with open(absolute_fragment, "r") as file:
+            FRAGMENT_SHADER = file.read()
+
+        shader_data = ShaderData(
+            vertex=VERTEX_SHADER,
+            fragment=FRAGMENT_SHADER
+        )
+        return shader_data
+
+    @staticmethod
     def get_model_fallback():
         config = system.state.env.resources.importing.fallback_model
         if config == "__default__":
@@ -375,9 +390,9 @@ class ImportManager:
         return material_data
 
     @classmethod
-    def _get_mesh(cls, node: GLBNode | NodeData, content: GLTF2) -> list[MeshData]:
+    def _get_mesh(cls, node: GLBNode | NodeData, content: GLTF2) -> MeshData:
         mesh = content.meshes[node.mesh or 0]
-        meshes: list[MeshData] = []
+        primitives: list[PrimitiveData] = []
         for primitive in mesh.primitives:
             primitive = mesh.primitives[0]
 
@@ -394,7 +409,7 @@ class ImportManager:
             material = primitive.material
             # target = primitive.targets
 
-            mesh_data = MeshData(
+            primitive_data = PrimitiveData(
                 positions=positions,
                 normals=normals,
                 tangents=tangents,
@@ -406,11 +421,15 @@ class ImportManager:
                 indices=indices,
                 mode=mode,
                 material=material,
-                name=node.name or "[Sem nome]"
             )
-            meshes.append(mesh_data)
+            primitives.append(primitive_data)
 
-        return meshes
+        mesh_data = MeshData(
+            primitives=primitives,
+            name=node.name or "[Sem nome]"
+        )
+
+        return mesh_data
 
     @classmethod
     def _get_camera(cls, node: GLBNode, content: GLTF2) -> CameraData:
@@ -463,10 +482,11 @@ class ImportManager:
         material_data: dict[int, MaterialData] = {}
         material_list: list[MaterialData] = []
         for mesh in meshes:
-            if (not mesh.material is None) and material_data.get(mesh.material) is None:
-                material = cls._get_material(mesh.material, content)
-                material_data[mesh.material] = material
-                material_list.append(material)
+            for primitive in mesh.primitives:
+                if (not primitive.material is None) and material_data.get(primitive.material) is None:
+                    material = cls._get_material(primitive.material, content)
+                    material_data[primitive.material] = material
+                    material_list.append(material)
             
         return material_data, material_list
 

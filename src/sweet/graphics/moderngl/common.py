@@ -1,6 +1,4 @@
 from dataclasses import dataclass
-from ..common import MeshBuffer, TextureBuffer
-from typing import Any
 
 @dataclass
 class Attribute:
@@ -24,10 +22,3 @@ class Introspection:
     uniforms: list[Attribute]
     ubos: list[DataBlock]
     ssbos: list[DataBlock]
-
-@dataclass
-class DrawCall:
-    mesh_handle: MeshBuffer
-    texture_handle: TextureBuffer
-    shader_handle: str
-    parameters: dict[str, Any]

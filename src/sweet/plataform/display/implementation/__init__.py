@@ -1,1 +1,0 @@
-from . import window # type: ignore

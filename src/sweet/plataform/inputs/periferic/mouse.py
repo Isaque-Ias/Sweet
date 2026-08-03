@@ -19,6 +19,9 @@ class MouseInput:
         self.mouse_scroll_x: float = 0
         self.mouse_scroll_y: float = 0
 
+    def reset(self):
+        self.update_mouse_delta(0, 0)
+
     def process_mouse_event(self, generic_button: int, action: ActionState, mapper: GenericMapper):
         button = mapper.to_sweet_mouse(generic_button)
 

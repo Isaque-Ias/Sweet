@@ -1,2 +1,1 @@
-from . import view # type: ignore # type: ignore
-from . import view_provider # type: ignore
+from . import view, view_provider # type: ignore

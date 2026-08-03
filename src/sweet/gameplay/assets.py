@@ -5,8 +5,13 @@ from .scene import SceneManager, Scene
 from .entity import Entity
 from typing import Optional
 from ..graphics.upload import UploadManager
+from ..plataform.hal.manager import GraphicsDevice
 
 class Assets:
+    def __init__(self, graphics_device: GraphicsDevice):
+        self._gfx_device = graphics_device
+        UploadManager.set_graphics_device(self._gfx_device)
+
     @classmethod
     def convert_to_entity(cls, node: NodeData, content: SceneData, parent: Optional[Entity] = None) -> Entity:
         entity_children: list[Entity] = []
@@ -19,6 +24,12 @@ class Assets:
             mesh_data = content.meshes[node.mesh]
             handle = UploadManager.upload_mesh(mesh_data)
             entity.set_mesh_component(handle)
+            # for primitive in mesh_data.primitives:
+            #     if primitive.material is None:
+            #         continue
+
+            #     for texture in content.materials[primitive.material].texture_coordinate_map.values():
+            #         pass
 
         return entity
 
@@ -31,5 +42,8 @@ class Assets:
         for child in children:
             entity_tree = cls.convert_to_entity(child, scene)
             entities.append(entity_tree)
+
+        for texture in scene.textures.values():
+            UploadManager.upload_texture_data(texture)
         
         return SceneManager.new_scene(scene.name, entities)

@@ -1,5 +1,6 @@
 from dataclasses import dataclass, field
 import moderngl
+from ..plataform.hal.manager import GPUBuffer
 
 @dataclass
 class FrameBuffer:
@@ -19,10 +20,18 @@ class LayoutInfo:
     component_size: str
 
 @dataclass
+class PrimitiveBufferDrawInfo:
+    index_count: int
+    vertex_count: int
+    base_vertex: int
+    index_byte_offset: int
+
+@dataclass
 class MeshBuffer:
     layout: list[LayoutInfo]
-    vbo: moderngl.Buffer
-    ebo: moderngl.Buffer | None = None
+    primitives: list[PrimitiveBufferDrawInfo]
+    vbo: GPUBuffer
+    ebo: GPUBuffer | None = None
     vao: dict[str, moderngl.VertexArray] = field(default_factory=lambda: {})
 
 @dataclass

@@ -16,7 +16,7 @@ class KeyboardInput:
 
     def process_key_event(self, generic_key: int, action: ActionState, mapper: GenericMapper):
         key = mapper.to_sweet_key(generic_key)
-        
+
         if key not in self._keys:
             self._keys[key] = KeyState()
 

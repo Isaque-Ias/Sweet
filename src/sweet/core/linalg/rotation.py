@@ -1,5 +1,5 @@
 from enum import Enum, auto
-from .vector import Vec, Vec3, VectorLike
+from .vector import Vec, Vec3, VecN, VectorLike
 from typing import Tuple, List
 import math
 
@@ -16,7 +16,7 @@ class Rotation:
         if isinstance(values, Vec):
             values = values.unp()
 
-        self.values = values
+        self.values = VecN(values)
 
     def convert(self, target_model: RotationModel) -> "Rotation":
         if self.model == target_model:
