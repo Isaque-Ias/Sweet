@@ -45,9 +45,3 @@ class UVLocation:
 class TextureBuffer:
     frame: moderngl.Texture
     uv: UVLocation
-
-@dataclass
-class ConvertedImage:
-    source: bytes
-    size: tuple[int, int]
-    data_format: int

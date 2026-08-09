@@ -1,12 +1,12 @@
 from moderngl_window.timers.clock import Timer
 import glfw
-from sweet.gameplay.views.view import ViewManager
+from sweet.gameplay.view import ViewManager
 from sweet.plataform.display.manager import DisplayManager
-from sweet.graphics.pipeline.manager import PipelineManager
-from sweet.gameplay.scene import SceneManager
 from sweet.gameplay.entity import Entity
 from sweet.plataform.hal.manager import GraphicsDeviceManager
 from sweet.core.system import state
+from sweet.gameplay.scene import SceneManager
+from sweet.graphics.render.process import PipelineManager
 
 ticks_per_second: int = 60
 
@@ -56,6 +56,11 @@ def _loop():
     active_windows_count = 0
 
     for display in displays:
+        display.input.reset()
+
+    glfw.poll_events()
+    
+    for display in displays:
         poll = display.poll_events()
         if not poll:
             display.close()
@@ -78,9 +83,11 @@ def _entity_logic(entities: list[Entity]):
 
 def _update(dt: float):
     # delta_time = dt
-    active_scenes = SceneManager.get_active_scenes()
+    active_scenes = SceneManager.get_active_scenes().values()
     for scene in active_scenes:
         scene.apply_logic(_entity_logic)
+        
+        scene.data_track.flush_to_gpu()
 
 def render(alpha: float):
     active_views = ViewManager.get_current_views()

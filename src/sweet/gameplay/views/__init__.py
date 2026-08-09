@@ -1,1 +1,0 @@
-from . import view, view_provider # type: ignore

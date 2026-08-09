@@ -3,6 +3,7 @@ from enum import Enum, auto
 import numpy as np
 from ..common import TRS
 from typing import TypeAlias, Optional
+from PIL import Image
 
 @dataclass
 class BufferData:
@@ -82,9 +83,11 @@ class PrimitiveData:
     # targets: list[float] | None
     mode: int
     material: int | None
+    aabb: list[float]
 
 @dataclass
 class MeshData:
+    aabb: list[float]
     primitives: list[PrimitiveData] = field(default_factory=lambda: [])
     name: str = "[Modelo sem nome]"
 
@@ -116,8 +119,11 @@ class CameraData:
 
 @dataclass
 class TextureData:
-    source: BufferData
-    mime_type: str
+    source: Image.Image
+    width: int
+    height: int
+    components: int
+    name: str = "[Textura sem nome]"
 
 @dataclass
 class NodeData:
@@ -140,3 +146,13 @@ class SceneData:
 class ShaderData:
     vertex: str
     fragment: str
+
+@dataclass
+class ComputeData:
+    src: str
+
+@dataclass
+class AssetData:
+    textures: dict[str, TextureData]
+    meshes: dict[str, MeshData]
+    materials: dict[str, MaterialData]

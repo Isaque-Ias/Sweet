@@ -2,11 +2,11 @@ from __future__ import annotations
 import glm
 from enum import Enum, auto
 from sweet.plataform.display.manager import DisplaySurface
-from ...core import system
+from ..core import system
 from typing import Any, Optional, TYPE_CHECKING
-from ...plataform.hal.manager import RenderTarget
+from ..plataform.hal.manager import RenderTarget
 if TYPE_CHECKING:
-    from ..scene import Scene
+    from .scene import Scene
 
 class UpdatePolicy(Enum):
     EVERY_FRAME = auto()

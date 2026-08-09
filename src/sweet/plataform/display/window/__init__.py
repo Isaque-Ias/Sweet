@@ -1,1 +1,1 @@
-from . import glfw, sdl, window # type: ignore
+from . import moderngl, sdl, window # type: ignore

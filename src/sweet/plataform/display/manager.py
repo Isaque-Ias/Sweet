@@ -38,6 +38,11 @@ class DisplaySurface(ABC):
 
     @property
     @abstractmethod
+    def input(self) -> Any:
+        pass
+
+    @property
+    @abstractmethod
     def should_close(self) -> bool:
         pass
 

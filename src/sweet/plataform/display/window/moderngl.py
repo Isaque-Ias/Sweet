@@ -142,7 +142,7 @@ class GLWindow(WindowSurface):
 
         self.graphics_device = graphics_device
         self._offscreen_target: Optional[RenderTarget] = None
-        self._backbuffer_target = ModernGLWindowTarget(graphics_device.ctx, self)
+        self._backbuffer_target = ModernGLWindowTarget(self)
     
         self._title = title
         self._size = size
@@ -166,46 +166,47 @@ class GLWindow(WindowSurface):
         self._size = (width, height)
         self._title = title
 
+        if GLWindow._PRIMARY_WINDOW_HANDLE is None:
+            raise RuntimeError(
+                "Engine em OpenGL falhou"
+                "Engine precisa inicializar contexto dummy"
+            )
+
         try:
             glfw.window_hint(glfw.VISIBLE, glfw.TRUE) # type: ignore
-            glfw.window_hint(glfw.CONTEXT_VERSION_MAJOR, 3) # type: ignore
-            glfw.window_hint(glfw.CONTEXT_VERSION_MINOR, 3) # type: ignore
+            glfw.window_hint(glfw.CONTEXT_VERSION_MAJOR, 4) # type: ignore
+            glfw.window_hint(glfw.CONTEXT_VERSION_MINOR, 6) # type: ignore
             glfw.window_hint(glfw.OPENGL_PROFILE, glfw.OPENGL_CORE_PROFILE) # type: ignore
+            glfw.window_hint(glfw.RESIZABLE, glfw.TRUE if self._resizable else glfw.FALSE) # type: ignore
+            glfw.window_hint(glfw.SAMPLES, self._pixel_samples) # type: ignore
+
+            raw_handle = glfw.create_window( # type: ignore
+                width, height, title, None, GLWindow._PRIMARY_WINDOW_HANDLE
+            )
+            if not raw_handle:
+                raise RuntimeError(f"Janela falhou para inicializar: {title}")
+
+            glfw.make_context_current(raw_handle) # type: ignore
 
             primary_handle = GLWindow._PRIMARY_WINDOW_HANDLE
             if primary_handle is None and hasattr(self.graphics_device, "_dummy_window"):
                 primary_handle = self.graphics_device._dummy_window # type: ignore
 
-            if GLWindow._PRIMARY_WINDOW_HANDLE is None:
-                if primary_handle is not None:
-                    glfw.make_context_current(primary_handle) # type: ignore
-
+            if hasattr(self, '_use_mglw_proxy') and self._use_mglw_proxy: # type: ignore
                 window_cls = mglw.get_window_cls("moderngl_window.context.glfw.Window")
 
                 self.wnd = window_cls(
                     title=self._title,
-                    gl_version=(3, 3),
+                    gl_version=(4, 6),
                     size=self._size,
                     resizable=self._resizable,
                     fullscreen=self._fullscreen,
                     samples=self._pixel_samples,
                     vsync=True,
-                    ctx=getattr(self.graphics_device, "ctx", None)
+                    ctx=self.graphics_device.ctx # type: ignore
                 )
-
-                native_handle = self.get_native_handle()
-                if native_handle:
-                    GLWindow._PRIMARY_WINDOW_HANDLE = native_handle
-
-                self.input_manager.attach_input(self.wnd)
 
             else:
-                raw_handle = glfw.create_window( # type: ignore
-                    width, height, title, None, GLWindow._PRIMARY_WINDOW_HANDLE
-                )
-                if not raw_handle:
-                    raise RuntimeError(f"Failed to create secondary GLFW window: {title}")
-
                 self.wnd = _SecondaryWindowProxy(raw_handle, (width, height), title) # type: ignore
 
             self.input_manager.attach_input(self.wnd)
@@ -247,8 +248,6 @@ class GLWindow(WindowSurface):
         if not self.wnd or not self._active:
             return False
         if hasattr(self.wnd, "_window") and self.wnd._window: # type: ignore
-            self.input.reset()
-            glfw.poll_events()
             if glfw.window_should_close(self.wnd._window): # type: ignore
                 self._should_close = True
 

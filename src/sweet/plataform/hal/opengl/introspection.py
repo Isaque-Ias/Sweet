@@ -1,7 +1,7 @@
 from ctypes import create_string_buffer
 import numpy as np
 import OpenGL.GL as gl
-from ...graphics.moderngl.common import Attribute, Introspection, DataBlock
+from ..manager import Attribute, ResourceOutputs, ResourceInputs, Introspection, DataBlock
 
 class Introspect:
     _GL_TYPE_MAPPING: dict[int, tuple[str, int]] = {
@@ -25,8 +25,6 @@ class Introspect:
         gl.GL_SAMPLER_CUBE: ("samplerCube", 4), # type: ignore
     }
 
-    engine_prefix = "sw_"
-
     @classmethod
     def get_type_info(cls, gl_type: int) -> tuple[str, int]:
         return cls._GL_TYPE_MAPPING.get(gl_type, (f"UNKNOWN_TYPE_(0x{gl_type:X})", 0)) # type: ignore
@@ -49,11 +47,14 @@ class Introspect:
 
         props = [gl.GL_LOCATION, gl.GL_TYPE, gl.GL_ARRAY_SIZE, gl.GL_BLOCK_INDEX] # type: ignore
         
-        if interface_type == gl.GL_PROGRAM_INPUT: # type: ignore
+        if interface_type in (gl.GL_PROGRAM_INPUT, gl.GL_PROGRAM_OUTPUT): # type: ignore
             props = [gl.GL_LOCATION, gl.GL_TYPE, gl.GL_ARRAY_SIZE] # type: ignore
             
         elif interface_type == gl.GL_BUFFER_VARIABLE: # type: ignore
             props = [gl.GL_TYPE, gl.GL_ARRAY_SIZE] # type: ignore
+
+        else:
+            props = [gl.GL_LOCATION, gl.GL_TYPE, gl.GL_ARRAY_SIZE, gl.GL_BLOCK_INDEX] # type: ignore
 
         num_props = len(props)
         values = np.array([0] * num_props, dtype=np.int32)
@@ -64,7 +65,7 @@ class Introspect:
         length = 1
         block_index = -1
 
-        if interface_type == gl.GL_PROGRAM_INPUT: # type: ignore
+        if interface_type in (gl.GL_PROGRAM_INPUT, gl.GL_PROGRAM_OUTPUT): # type: ignore
             location_or_binding = int(values[0])
             gl_type = int(values[1])
             length = int(values[2])
@@ -109,29 +110,43 @@ class Introspect:
             name=name, 
             location=location_or_binding, 
             size=final_size, 
-            type_name=type_name, 
+            type_int=type_name, 
+            type_name=cls._GL_TYPE_MAPPING[type_name][0], 
             length=length
         )
 
     @classmethod
-    def introspect_layout(cls, program_id: int) -> tuple[list[Attribute], list[Attribute]]:
-        geometry_layout: list[Attribute] = []
-        instance_layout: list[Attribute] = []
+    def introspect_targets(cls, program_id: int) -> list[Attribute]:
+        targets: list[Attribute] = []
+        num_outputs = np.array([0], dtype=np.int32)
+        gl.glGetProgramInterfaceiv(program_id, gl.GL_PROGRAM_OUTPUT, gl.GL_ACTIVE_RESOURCES, num_outputs) # type: ignore
+        
+        for i in range(num_outputs[0]):
+            attribute = cls.create_attribute(program_id, gl.GL_PROGRAM_OUTPUT, i) # type: ignore
+            
+            if attribute.location == -1:
+                continue
+                
+            targets.append(attribute)
+        
+        targets.sort(key=lambda x: x.location)
+
+        return targets
+
+    @classmethod
+    def introspect_layout(cls, program_id: int) -> list[Attribute]:
+        layout: list[Attribute] = []
 
         num_inputs = np.array([0], dtype=np.int32)
         gl.glGetProgramInterfaceiv(program_id, gl.GL_PROGRAM_INPUT, gl.GL_ACTIVE_RESOURCES, num_inputs) # type: ignore
         
         for i in range(num_inputs[0]):
             attribute = cls.create_attribute(program_id, gl.GL_PROGRAM_INPUT, i) # type: ignore
-            if attribute.name[:len(cls.engine_prefix)] == cls.engine_prefix:
-                geometry_layout.append(attribute)
-            else:
-                instance_layout.append(attribute)
+            layout.append(attribute)
         
-        geometry_layout.sort(key=lambda x: x.location)
-        instance_layout.sort(key=lambda x: x.location)
+        layout.sort(key=lambda x: x.location)
 
-        return geometry_layout, instance_layout
+        return layout
 
     @classmethod
     def introspect_uniforms(cls, program_id: int) -> list[Attribute]:
@@ -213,11 +228,14 @@ class Introspect:
 
     @classmethod
     def introspect_program(cls, program_id: int) -> Introspection:
-        geometry_layout, instance_layout = cls.introspect_layout(program_id)
+        layout = cls.introspect_layout(program_id)
         uniforms = cls.introspect_uniforms(program_id)
         ubos = cls.introspect_ubos(program_id)
         ssbos = cls.introspect_ssbos(program_id)
+        targets = cls.introspect_targets(program_id)
 
-        introspection = Introspection(geometry_layout=geometry_layout, instance_layout=instance_layout, uniforms=uniforms, ubos=ubos, ssbos=ssbos)
+        inputs = ResourceInputs(layout=layout, uniforms=uniforms, ubos=ubos, ssbos=ssbos)
+        outputs = ResourceOutputs(targets=targets)
+        introspection = Introspection(inputs, outputs)
         
         return introspection

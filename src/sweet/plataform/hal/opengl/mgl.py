@@ -1,25 +1,28 @@
 import moderngl
 import glfw
 from sweet.plataform.hal.manager import *
-from typing import Any, Optional, Callable, cast
-
+from typing import Any, Optional, Callable, cast, Union
 from sweet.plataform.hal.manager import RenderTarget
+from .introspection import Introspect, Introspection
+
+gfx_device: "ModernGLGraphicsDevice"
 
 class ModernGLGPUShader(GPUShader):
-    def __init__(self, ctx: moderngl.Context, vertex_src: str, fragment_src: str):
-        self.ctx = ctx
-        # Compile GLSL shader sources into a ModernGL program
-        self.program: moderngl.Program = ctx.program(
-            vertex_shader=vertex_src,
-            fragment_shader=fragment_src
+    def __init__(self, source: Any):
+        self.program: moderngl.Program = gfx_device.ctx.program(
+            vertex_shader=source.vertex,
+            fragment_shader=source.fragment
         )
+        self._introspection = Introspect.introspect_program(self.program.glo)
+
+    def get_introspection(self) -> Introspection:
+        return self._introspection
 
     def bind(self):
-        pass  # Bound implicitly when ModernGL VertexArray renders
-
+        pass
 
 class ModernGLVertexLayout(VertexLayout):
-    def __init__(self, layout_format: str, attributes: list[str]):
+    def __init__(self, layout_format: Optional[str], attributes: Optional[list[str]]):
         self.format_str = layout_format
         self.attributes = attributes
 
@@ -30,25 +33,31 @@ class ModernGLVertexLayout(VertexLayout):
         pass
 
 class ModernGLGPUBuffer(GPUBuffer):
-    def __init__(self, ctx: moderngl.Context, size: int, dynamic: bool = False):
-        self.ctx = ctx
-        self.size = size
-        # ModernGL handles GL_DYNAMIC_DRAW vs GL_STATIC_DRAW via dynamic=True
-        self.buffer: moderngl.Buffer = ctx.buffer(reserve=size, dynamic=dynamic)
+    def __init__(self, size: int, dynamic: bool = False) -> None:
+        self.ctx = gfx_device.ctx
+        self._size = size
+        self.buffer: moderngl.Buffer = self.ctx.buffer(reserve=size, dynamic=dynamic)
+
+    @property
+    def size(self) -> int:
+        return self._size
 
     def upload_data(self, data: Any, offset: int = 0):
         self.buffer.write(data, offset=offset)
+
+    def read_data(self, size: int = -1, offset: int = 0) -> bytes:
+        return self.buffer.read(size=size, offset=offset)
 
     def release(self):
         if self.buffer:
             self.buffer.release()
 
 class ModernGLTexture2D(Texture2D):
-    def __init__(self, ctx: moderngl.Context, width: int, height: int, components: int = 4):
-        self.ctx = ctx
+    def __init__(self, width: int, height: int, components: int = 4):
+        self.ctx = gfx_device.ctx
         self.width = width
         self.height = height
-        self.texture: moderngl.Texture = ctx.texture((width, height), components)
+        self.texture: moderngl.Texture = self.ctx.texture((width, height), components)
 
     def upload_pixels(self, data: Any, width: int, height: int):
         self.texture.write(data)
@@ -59,7 +68,7 @@ class ModernGLTexture2D(Texture2D):
 
 class ModernGLResourceLayout(ResourceLayout):
     def __init__(self, bindings: list[tuple[int, ResourceType]]):
-        self.bindings = dict(bindings)
+        super().__init__(bindings)
 
 class ModernGLResourceSet(ResourceSet):
     def __init__(self, layout: ModernGLResourceLayout):
@@ -69,7 +78,7 @@ class ModernGLResourceSet(ResourceSet):
     def update(self, bindings: list[ResourceBinding]) -> None:
         for b in bindings:
             if b.binding_slot not in self.layout.bindings:
-                raise ValueError(f"Binding slot {b.binding_slot} not declared in ResourceLayout.")
+                raise ValueError(f"Binding {b.binding_slot} não possui um slot declarado em layout")
             self.bound_resources[b.binding_slot] = b
 
     def apply(self, set_index_offset: int = 0):
@@ -109,7 +118,7 @@ class ModernGLFramebufferTarget(RenderTarget):
         
         mgl_color_attachments: list[moderngl.Texture] = []
         for fmt in color_formats:
-            tex = ModernGLTexture2D(ctx, width, height, components=fmt)
+            tex = ModernGLTexture2D(width, height, components=fmt)
             self._color_textures.append(tex)
             mgl_color_attachments.append(tex.texture)
 
@@ -146,9 +155,12 @@ class ModernGLFramebufferTarget(RenderTarget):
     def framebuffer(self) -> moderngl.Framebuffer:
         return self.native_handle
 
+    def release(self) -> None:
+        self.framebuffer.release()
+
 class ModernGLWindowTarget(RenderTarget):
-    def __init__(self, ctx: moderngl.Context, window: Any = None):
-        self.ctx = ctx
+    def __init__(self, window: Any = None):
+        self.ctx = gfx_device.ctx
         self.window = window
 
     def make_current(self):
@@ -167,7 +179,7 @@ class ModernGLWindowTarget(RenderTarget):
 
     @property
     def color_textures(self) -> list[Texture2D]:
-        return None # type: ignore
+        return [] # type: ignore
 
     @property
     def depth_texture(self) -> Optional[Texture2D]:
@@ -181,15 +193,17 @@ class ModernGLWindowTarget(RenderTarget):
     def framebuffer(self) -> moderngl.Framebuffer:
         return self.ctx.screen
 
+    def release(self) -> None:
+        pass
+
 class ModernGLRenderPipeline(RenderPipeline):
-    def __init__(self, ctx: moderngl.Context, descriptor: RenderPipelineDescriptor):
-        self.ctx = ctx
+    def __init__(self, descriptor: RenderPipelineDescriptor):
+        self.ctx = gfx_device.ctx
         self.descriptor = descriptor
         if not isinstance(descriptor.shader, ModernGLGPUShader):
             raise TypeError("Implementação precisa ser compatível com ModernGLGPUShader")
         self.program: moderngl.Program = descriptor.shader.program
         
-        # Map Primitive Topologies to ModernGL modes
         topologies = {
             "triangles": moderngl.TRIANGLES,
             "lines": moderngl.LINES,
@@ -212,6 +226,12 @@ class ModernGLRenderPipeline(RenderPipeline):
         if cache_key not in self._vao_cache:
             layout = cast(ModernGLVertexLayout, self.descriptor.vertex_layout)
             index_buffer = ibo.buffer if ibo else None
+            if layout.attributes is None or layout.format_str is None:
+                
+                self._vao_cache[cache_key] = self.ctx.vertex_array( # type: ignore
+                    self.program, []
+                )
+                return self._vao_cache[cache_key]
 
             buffer_spec = (
                 vbo.buffer, 
@@ -263,7 +283,6 @@ class ModernGLCommandBuffer(CommandBuffer):
         self.ctx = ctx
         self._commands: list[Callable[..., Any]] = []
         
-        # Track active render pass state
         self._current_pipeline: Optional[ModernGLRenderPipeline] = None
         self._current_target: Optional[RenderTarget] = None
         self._current_resource_sets: dict[int, ModernGLResourceSet] = {}
@@ -313,7 +332,6 @@ class ModernGLCommandBuffer(CommandBuffer):
         if not isinstance(resource_set, ModernGLResourceSet):
             raise TypeError("ResourceSet deve ser compatível com a implementação HAL")
         self._current_resource_sets[set_index] = resource_set
-        # Multiply set index by stride if allocating offset binding spaces (e.g. Set 0=0-7, Set 1=8-15)
         offset = set_index * 8
         def cmd_set_resources():
             resource_set.apply(set_index_offset=offset)
@@ -329,9 +347,30 @@ class ModernGLCommandBuffer(CommandBuffer):
             raise TypeError("Buffer deve ser compatível com a implementação HAL")
         self._current_ibo = buffer
 
+    def use_texture(self, src_render_target: RenderTarget, src_attachment: int, location: int) -> None:
+        def use():
+            src_render_target.framebuffer.color_attachments[src_attachment].use(location=location)
+        self._commands.append(use)
+
+    def set_uniform_value(self, uniform: str, value: bytes):
+        pipeline = self._current_pipeline
+
+        def set_uniform():
+            if pipeline and uniform in pipeline.program:
+                pipeline.program[uniform].write(value) # type: ignore
+
+        self._commands.append(set_uniform)
+
     def draw(self, vertex_count: int, instance_count: int = 1, first_vertex: int = 0, first_instance: int = 0) -> None:
         pipeline = self._current_pipeline
         vbo = self._current_vbo
+        
+        if vbo is None:
+            def empty_cmd():
+                vao = self.ctx.vertex_array(pipeline.program, []) # type: ignore
+                vao.render(mode=pipeline.mode, vertices=vertex_count, instances=instance_count, first=first_vertex) # type: ignore
+            self._commands.append(empty_cmd)
+            return
         
         def cmd_draw():
             vao = self.ctx.vertex_array( # type: ignore
@@ -355,19 +394,29 @@ class ModernGLCommandBuffer(CommandBuffer):
         if p is None or v is None or i is None or t is None:
             raise RuntimeError("Pipeline, VBO, IBO e Target precisam estar configurados antes do draw_indexed call")
 
-        def cmd_draw_indexed(p: ModernGLRenderPipeline=p, 
-            v: ModernGLGPUBuffer=v, 
-            i: Optional[ModernGLGPUBuffer]=i, 
-            t: RenderTarget=t, 
-            ic: int=index_count, 
+        def cmd_draw_indexed(
+            p: ModernGLRenderPipeline=p,
+            v: ModernGLGPUBuffer=v,
+            i: Optional[ModernGLGPUBuffer]=i,
+            t: RenderTarget=t,
+            ic: int=index_count,
             fi: int=first_index,
             bv: int=base_vertex,
-            inst: int=instance_count
+            inst: int=instance_count,
+            first_inst: int=first_instance
         ):
             vao = p.get_or_create_vao(id(t), v, i, base_vertex=bv)
             vao.render(mode=p.mode, vertices=ic, instances=inst, first=fi)
 
         self._commands.append(cmd_draw_indexed)
+
+    def redirect(self, dst_target: RenderTarget, src_attachment: int | str, dst_attachment: int | str) -> None:
+        def cmd_redirect():
+            src_target = self._current_target
+            if src_target:
+                gfx_device.blit_texture_to_target(src_target, dst_target, src_attachment, dst_attachment)
+
+        self._commands.append(cmd_redirect)
 
     def end_render_pass(self) -> None:
         pass
@@ -384,9 +433,8 @@ class ModernGLGraphicsDevice(GraphicsDevice):
         super().__init__("MODERNGL")
 
         if not glfw.init():
-            raise RuntimeError("Failed to initialize GLFW")
+            raise RuntimeError("Falha ao inicializar GLFW")
             
-        # 2. Create HIDDEN dummy window to anchor the OpenGL Context
         glfw.window_hint(glfw.VISIBLE, glfw.FALSE)  # Keep hidden! # type: ignore
         glfw.window_hint(glfw.CONTEXT_VERSION_MAJOR, 3) # type: ignore
         glfw.window_hint(glfw.CONTEXT_VERSION_MINOR, 3) # type: ignore
@@ -395,39 +443,87 @@ class ModernGLGraphicsDevice(GraphicsDevice):
         self._dummy_window = glfw.create_window(1, 1, "DummyContextWindow", None, None) # type: ignore
         glfw.make_context_current(self._dummy_window) # type: ignore
         
-        # 3. Create single master ModernGL context on the dummy window
-        self.ctx = moderngl.create_context(require=330)
+        self.ctx: moderngl.Context = cast(moderngl.Context, moderngl.create_context(gl_version=(4, 6))) # type: ignore
 
     def initialize(self):
         if not self.ctx:
             self.ctx = moderngl.create_context(standalone=True)
 
+    def _resolve_attachment_texture(
+        self, 
+        target: RenderTarget, 
+        attachment: Union[int, str]
+    ) -> moderngl.Texture:
+        if attachment == "depth":
+            tex = target.depth_texture
+            if tex is None:
+                raise ValueError(f"RenderTarget '{target}' does not have a depth_texture initialized.")
+            return tex.texture # type: ignore
+        elif isinstance(attachment, int):
+            colors = target.color_textures
+            if not colors or attachment < 0 or attachment >= len(colors):
+                raise IndexError(
+                    f"Color attachment index {attachment} out of bounds for RenderTarget."
+                )
+            return colors[attachment].texture # type: ignore
+        else:
+            raise ValueError(f"Invalid attachment specifier '{attachment}'. Use an integer index or 'depth'.")
+
     def blit_texture_to_target(
         self, 
         src_target: RenderTarget, 
         dst_target: RenderTarget, 
+        src_attachment: Union[int, str] = 0,
+        dst_attachment: Union[int, str] = 0,
         src_viewport: Optional[tuple[int, int, int, int]] = None,
         dst_viewport: Optional[tuple[int, int, int, int]] = None,
-        filter_linear: bool = True
     ) -> None:
         if not self.ctx:
-            raise RuntimeError("Context ModernGL não foi inicializado.")
-        # Extract native moderngl.Framebuffer handles
-        src_fb: moderngl.Framebuffer = src_target.native_handle # type: ignore
-        dst_fb: moderngl.Framebuffer = dst_target.native_handle # type: ignore
+            raise RuntimeError("Context ModernGL não foi inicializado")
 
-        # Default viewports to full target sizes if not provided
-        # src_box = src_viewport if src_viewport else (0, 0, src_target.size[0], src_target.size[1])
-        # dst_box = dst_viewport if dst_viewport else (0, 0, dst_target.size[0], dst_target.size[1])
+        is_src_depth = (src_attachment == "depth")
+        is_dst_depth = (dst_attachment == "depth")
+        if is_src_depth != is_dst_depth:
+            raise ValueError("Cannot blit between mismatched attachment types (e.g., Color to Depth).")
 
-        # ModernGL copy_framebuffer (glBlitFramebuffer under the hood)
-        # Note: src parameter is the source FBO, dst is the destination
-        self.ctx.copy_framebuffer(
-            dst=dst_fb, 
-            src=src_fb,
-            # Filter interpolation when scaling (linear or nearest)
-            # filter=moderngl.LINEAR if filter_linear else moderngl.NEAREST
-        )
+        tmp_src_fb: Optional[moderngl.Framebuffer] = None
+        if src_target.color_textures or (is_src_depth and src_target.depth_texture):
+            src_tex = self._resolve_attachment_texture(src_target, src_attachment)
+            tmp_src_fb = (
+                self.ctx.framebuffer(depth_attachment=src_tex)
+                if is_src_depth
+                else self.ctx.framebuffer(color_attachments=[src_tex])
+            )
+            src_fb = tmp_src_fb
+            src_w, src_h = src_tex.width, src_tex.height
+        else:
+            src_fb = src_target.framebuffer
+            src_w, src_h = src_target.size
+
+        tmp_dst_fb: Optional[moderngl.Framebuffer] = None
+        if dst_target.color_textures or (is_dst_depth and dst_target.depth_texture):
+            dst_tex = self._resolve_attachment_texture(dst_target, dst_attachment)
+            tmp_dst_fb = (
+                self.ctx.framebuffer(depth_attachment=dst_tex)
+                if is_dst_depth
+                else self.ctx.framebuffer(color_attachments=[dst_tex])
+            )
+            dst_fb = tmp_dst_fb
+            dst_w, dst_h = dst_tex.width, dst_tex.height
+        else:
+            dst_fb = dst_target.framebuffer
+            dst_w, dst_h = dst_target.size
+
+        src_fb.viewport = src_viewport if src_viewport is not None else (0, 0, src_w, src_h)
+        dst_fb.viewport = dst_viewport if dst_viewport is not None else (0, 0, dst_w, dst_h)
+
+        try:
+            self.ctx.copy_framebuffer(dst=dst_fb, src=src_fb)
+        finally:
+            if tmp_src_fb:
+                tmp_src_fb.release()
+            if tmp_dst_fb:
+                tmp_dst_fb.release()
 
     def shutdown(self):
         if self.ctx:
@@ -445,37 +541,30 @@ class ModernGLGraphicsDevice(GraphicsDevice):
             raise RuntimeError("Inicialize o contexto ModernGL antes de criar um framebuffer MRT")
         return ModernGLFramebufferTarget(self.ctx, width, height, color_formats=color_formats, has_depth=has_depth)
 
-    def get_backbuffer_target(self) -> RenderTarget:
-        if not self.ctx:
-            raise RuntimeError("Inicialize o contexto ModernGL antes de criar um backbuffer target")
-        return ModernGLWindowTarget(self.ctx)
-
     def create_vertex_buffer(self, size: int, dynamic: bool = False) -> GPUBuffer:
         if not self.ctx:
             raise RuntimeError("Inicialize o contexto ModernGL antes de criar um vertex buffer")
-        return ModernGLGPUBuffer(self.ctx, size, dynamic)
+        return ModernGLGPUBuffer(size, dynamic)
 
     def create_index_buffer(self, size: int, dynamic: bool = False) -> GPUBuffer:
         if not self.ctx:
             raise RuntimeError("Inicialize o contexto ModernGL antes de criar um index buffer")
-        return ModernGLGPUBuffer(self.ctx, size, dynamic)
+        return ModernGLGPUBuffer(size, dynamic)
 
     def create_shader_program(self, program: Any) -> GPUShader:
-        vertex_src = program.vertex
-        fragment_src = program.fragment
         
         if not self.ctx:
             raise RuntimeError("Inicialize o contexto ModernGL antes de criar um shader program")
             
-        return ModernGLGPUShader(self.ctx, vertex_src, fragment_src)
+        return ModernGLGPUShader(program)
 
     def create_vertex_layout(
             self,
             shader: Any,
-            vertex_buffer: GPUBuffer,
-            layout_format: str,
-            attributes: list[str],
-            index_buffer: GPUBuffer | None = None
+            vertex_buffer: Optional[GPUBuffer] = None,
+            layout_format: Optional[str] = None,
+            attributes: Optional[list[str]] = None,
+            index_buffer: Optional[GPUBuffer] = None,
         ) -> VertexLayout:
         return ModernGLVertexLayout(layout_format, attributes)
         
@@ -495,13 +584,25 @@ class ModernGLGraphicsDevice(GraphicsDevice):
         if not self.ctx:
             raise RuntimeError("Inicialize o contexto ModernGL antes de criar um uniform buffer")
         
-        return ModernGLGPUBuffer(self.ctx, size, dynamic=True)
+        return ModernGLGPUBuffer(size, dynamic=False)
+
+    def create_bindless_storage_buffer(self, size_mb: int) -> GPUBuffer:
+        if not self.ctx:
+            raise RuntimeError("Inicialize o contexto ModernGL antes de criar um storage buffer")
+        
+        return ModernGLGPUBuffer(size_mb * 1024 * 1024, dynamic=True)
+
+    def create_bindless_texture_buffer(self, size_mb: int) -> GPUBuffer:
+        if not self.ctx:
+            raise RuntimeError("Inicialize o contexto ModernGL antes de criar um texture buffer")
+        
+        return ModernGLGPUBuffer(size_mb * 1024 * 1024, dynamic=True)
 
     def create_texture2d(self, width: int, height: int, format: int = 4) -> Texture2D:
         if not self.ctx:
             raise RuntimeError("Inicialize o contexto ModernGL antes de criar uma textura 2D")
         
-        return ModernGLTexture2D(self.ctx, width, height, components=format)
+        return ModernGLTexture2D(width, height, components=format)
 
     def create_resource_layout(self, bindings: list[tuple[int, ResourceType]]) -> ResourceLayout:
         return ModernGLResourceLayout(bindings)
@@ -512,7 +613,7 @@ class ModernGLGraphicsDevice(GraphicsDevice):
     def create_render_pipeline(self, descriptor: RenderPipelineDescriptor) -> RenderPipeline:
         if not self.ctx:
             raise RuntimeError("Inicialize o contexto ModernGL antes de criar um pipeline de renderização")
-        return ModernGLRenderPipeline(self.ctx, descriptor)
+        return ModernGLRenderPipeline(descriptor)
 
     def create_command_buffer(self) -> CommandBuffer:
         if not self.ctx:

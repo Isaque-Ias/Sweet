@@ -1,5 +1,7 @@
+import io
 from pathlib import Path
 from ...core import system
+import trimesh
 from pygltflib import GLTF2
 from pygltflib import Node as GLBNode
 from pygltflib import Scene as GLBScene
@@ -10,12 +12,15 @@ from ..common import TRS
 from ...core.linalg.vector import Vec3
 from ...core.linalg.rotation import Rotation, RotationModel
 import math
-from typing import cast, Callable, Any, Optional
+from typing import cast, Callable, Any, Optional, Sequence
 from .import_data import *
 import numpy as np
+from PIL import Image
+from PIL.Image import Transpose
 
 class ImportManager:
-    _model_formats = [".glb"]
+    _model_formats = [".glb", ".obj"]
+    _texture_formats = [".glb", ".png", ".jpeg"]
     _scene_formats = [".glb"]
 
     _ALPHA_MODE_MAP: dict[str, AlphaMode] = {
@@ -49,6 +54,15 @@ class ImportManager:
     }
 
     @staticmethod
+    def load_compute_shaders(path: str | Path) -> ComputeData:
+        solved_path = system.solve_path(path)
+        with open(solved_path, "r") as file:
+            shader = file.read()
+
+        shader_data = ComputeData(src=shader)
+        return shader_data
+
+    @staticmethod
     def load_shaders(path_vertex: str | Path, path_fragment: str | Path) -> ShaderData:
         absolute_vertex = system.solve_path(path_vertex)
         absolute_fragment = system.solve_path(path_fragment)
@@ -75,9 +89,9 @@ class ImportManager:
                 raise FileNotFoundError(f"Modelo de fallback não encontrada em: {fallback_path}")
 
         return fallback_path
-    
+
     @classmethod
-    def load_models(cls, path: str | Path) -> list[MeshData]:
+    def _model_validation(cls, path: str | Path, command: Callable[..., Any]) -> Any:
         solved_path = system.solve_path(path)
         file_format = solved_path.suffix
 
@@ -91,19 +105,137 @@ class ImportManager:
             solved_path = cls.get_model_fallback()
             file_format = solved_path.suffix
 
-        if file_format == ".glb":
-            content = GLTF2().load(solved_path) # type: ignore
-            if content == None:
-                return []
+        
+        result = command(solved_path, file_format)
+        return result
 
-            mesh_list: list[MeshData] = []
-            for node in content.nodes:
-                if (not node.mesh is None):
-                    mesh_data = cls._get_mesh(node, content)
-                    mesh_list.append(mesh_data)
+    @classmethod
+    def _min_max_to_center(cls, aabb: Sequence[float]) -> list[float]:
+        center: list[float] = [
+            (aabb[0] + aabb[3]) / 2,
+            (aabb[1] + aabb[4]) / 2,
+            (aabb[2] + aabb[5]) / 2,
+        ]
+        half_extent: list[float] = [
+            (aabb[3] + aabb[0]) / 2,
+            (aabb[4] + aabb[1]) / 2,
+            (aabb[5] + aabb[2]) / 2,
+        ]
+        return center + half_extent
 
-        system.warn(f"Formato de modelo não suportado para arquivo em '{solved_path}'. Tente usar: {cls._model_formats}")
-        return []
+    @classmethod
+    def _load_obj_model(cls, path: Path, material_id: int | None = None) -> PrimitiveData:
+        mesh = trimesh.load(path, force='mesh') # type: ignore
+        positions = mesh.vertices.flatten().tolist() # type: ignore
+        indices = mesh.faces.flatten().tolist() # type: ignore
+        
+        normals = mesh.vertex_normals.flatten().tolist() if hasattr(mesh, 'vertex_normals') else None # type: ignore
+        
+        texcoord_0 = None
+        if hasattr(mesh.visual, 'uv') and mesh.visual.uv is not None: # type: ignore
+            texcoord_0 = mesh.visual.uv.flatten().tolist() # type: ignore
+            
+        colors = None
+        if hasattr(mesh.visual, 'vertex_colors') and mesh.visual.vertex_colors is not None: # type: ignore
+            colors = mesh.visual.vertex_colors.flatten().tolist() # type: ignore
+
+        aabb_np = mesh.bounds.tolist() if hasattr(mesh, 'bounds') else [[0, 0, 0], [0, 0, 0]]
+        aabb = cls._min_max_to_center(aabb_np[0] + aabb_np[1])
+        
+        return PrimitiveData(
+            positions=BufferData(positions), # type: ignore
+            normals=BufferData(normals) if normals else None, # type: ignore
+            tangents=None,
+            texcoord_0=BufferData(texcoord_0) if texcoord_0 else None, # type: ignore
+            texcoord_1=None,
+            colors=BufferData(colors) if colors else None, # type: ignore
+            joints=None,
+            weights=None,
+            indices=BufferData(indices), # type: ignore
+            mode=4,
+            material=material_id,
+            aabb=aabb
+        )
+
+    @classmethod
+    def _load_png_texture(cls, path: Path) -> TextureData:
+        with Image.open(path) as img:
+            width, height = img.size
+            
+            if img.mode in ('RGBA', 'LA', 'P'):
+                target_mode = 'RGBA'
+                components = 4
+            else:
+                target_mode = 'RGB'
+                components = 3
+                
+            converted_img = img.convert(target_mode)
+            
+            return TextureData(
+                source=converted_img,
+                width=width,
+                height=height,
+                components=components,
+                name="[Textura sem nome]"
+            )
+    
+    @classmethod
+    def load_model(cls, path: str | Path, query: Optional[str]=None) -> Optional[MeshData]:
+        def command(solved_path: Path, file_format: str) -> Optional[MeshData]:
+            if file_format == ".glb":
+                content = GLTF2().load(solved_path) # type: ignore
+                if not content is None:
+                    first_candidate: Optional[MeshData] = None
+                    
+                    for node in content.nodes:
+                        if not node.mesh is None:
+                            mesh_data = cls._get_mesh(node, content)
+                            if query is None:
+                                return mesh_data
+                            if first_candidate is None:
+                                first_candidate = mesh_data
+                            if mesh_data.name == query or node.name == query:
+                                return mesh_data
+
+                    return first_candidate
+                else:
+                    system.warn(f"Conteúdo de {solved_path} é vazio")
+                    
+                    return None
+
+            elif file_format == ".obj":
+                primitive = cls._load_obj_model(solved_path)
+                return MeshData(
+                    aabb=primitive.aabb,
+                    primitives=[primitive],
+                    name=solved_path.stem
+                )
+
+            else:
+                system.warn(f"Formato de modelo não suportado para arquivo em '{solved_path}'. Tente usar: {cls._model_formats}")
+                return None
+
+        final_model = cls._model_validation(path, command)
+        return final_model
+    
+    @classmethod
+    def load_models(cls, path: str | Path) -> Optional[MeshData]:
+        def command(solved_path: Path, content: Any) -> dict[str, MeshData]:
+            if not content is None:
+                mesh_set: dict[str, MeshData] = {}
+
+                for node in content.nodes:
+                    if (not node.mesh is None):
+                        mesh_data = cls._get_mesh(node, content)
+                        mesh_set[mesh_data.name] = mesh_data
+                        
+                return mesh_set
+            else:
+                system.warn(f"Conteúdo de {solved_path} é vazio")
+                return {}
+
+        final_models = cls._model_validation(path, command)
+        return final_models
 
     @staticmethod
     def _matrix_to_trs(node: GLBNode) -> TRS:
@@ -266,42 +398,52 @@ class ImportManager:
         return BufferData(accessor.type, name, array.shape[0], array)
 
     @classmethod
-    def _image_data(cls, index: int | None, content: GLTF2) -> BufferData | None:
+    def _image_data(cls, index: int | None, content: GLTF2) -> bytearray | None:
         if index is None:
             return
 
         buffer_view = content.bufferViews[index]
 
-        raw_blob = cast(bytearray, content.binary_blob()) if content.binary_blob() else b""
+        raw_blob = content.binary_blob() if content.binary_blob() else None
             
         view_start = buffer_view.byteOffset or 0
     
         absolute_start = view_start
         view_length = buffer_view.byteLength or 0
         
-        buffer_bytes = raw_blob[absolute_start : absolute_start + view_length]
-        
-        array = np.frombuffer(buffer_bytes, dtype=np.uint8)
-        
-        buffer = BufferData(
-            dim_type="VEC4",
-            data_type="UNSIGNED_BYTE",
-            count=array.shape[0],
-            data=array
-        )
-        return buffer
+        buffer_bytes = cast(bytearray, raw_blob[absolute_start : absolute_start + view_length]) # type: ignore
+    
+        return buffer_bytes
 
     @classmethod
     def _get_texture(cls, index: int, content: GLTF2) -> TextureData:
-
         source = content.images[index]
-        buffer = cast(BufferData, cls._image_data(source.bufferView, content))
+        raw_bytes = cls._image_data(source.bufferView, content)
+        if raw_bytes is None: raw_bytes = bytearray()
 
-        texture_data = TextureData(
-            source=buffer,
-            mime_type=source.mimeType
+        pil_img = Image.open(io.BytesIO(raw_bytes))
+
+        if pil_img.mode in ('RGBA', 'LA', 'P'):
+            target_mode = 'RGBA'
+            components = 4
+        else:
+            target_mode = 'RGB'
+            components = 3
+
+        pil_img = pil_img.convert(target_mode)
+        
+        pil_img = pil_img.transpose(Transpose.FLIP_TOP_BOTTOM)
+        
+        width, height = pil_img.size
+        
+        final_image = TextureData(
+            source=pil_img,
+            width=width,
+            height=height,
+            components=components,
+            name="[Textura sem nome]"
         )
-        return texture_data
+        return final_image
 
     @classmethod
     def _process_binding(cls, texture_info: GLBTextureInfo | GLBOcclusionTextureInfo | GLBNormalMaterialTexture | None, local_uv_map: dict[int, list[int]]) -> Optional[TextureChannelBinding]:
@@ -362,6 +504,7 @@ class ImportManager:
                     explanation="Modulates surface vectors to simulate fine geometric detail using RGB vectors.",
                     scalar_modifier=getattr(material.normalTexture, "scale", 1.0)
                 )
+
         if material.occlusionTexture:
             material.occlusionTexture.index
             binding = cls._process_binding(material.occlusionTexture, local_uv_map)
@@ -393,10 +536,14 @@ class ImportManager:
     def _get_mesh(cls, node: GLBNode | NodeData, content: GLTF2) -> MeshData:
         mesh = content.meshes[node.mesh or 0]
         primitives: list[PrimitiveData] = []
+        mesh_min: list[float] = []
+        mesh_max: list[float] = []
         for primitive in mesh.primitives:
             primitive = mesh.primitives[0]
 
-            positions = cls._access_data(primitive.attributes.POSITION, content) # type: ignore
+            pos_id = int(primitive.attributes.POSITION) # type: ignore
+
+            positions = cls._access_data(pos_id, content) # type: ignore
             normals = cls._access_data(primitive.attributes.NORMAL, content) # type: ignore
             tangents = cls._access_data(primitive.attributes.TANGENT, content) # type: ignore
             textures_0 = cls._access_data(primitive.attributes.TEXCOORD_0, content) # type: ignore
@@ -409,6 +556,21 @@ class ImportManager:
             material = primitive.material
             # target = primitive.targets
 
+            min_aabb = content.accessors[pos_id].min or [0, 0, 0]
+            max_aabb = content.accessors[pos_id].max or [0, 0, 0]
+
+            if not mesh_min: mesh_min = min_aabb.copy()
+            if not mesh_max: mesh_max = min_aabb.copy()
+
+            for i in range(len(mesh_min)):
+                if mesh_min[i] > min_aabb[i]:
+                    mesh_min[i] = min_aabb[i]
+            for i in range(len(mesh_max)):
+                if mesh_max[i] < max_aabb[i]:
+                    mesh_max[i] = max_aabb[i]
+            
+            aabb = min_aabb + max_aabb
+            
             primitive_data = PrimitiveData(
                 positions=positions,
                 normals=normals,
@@ -421,11 +583,15 @@ class ImportManager:
                 indices=indices,
                 mode=mode,
                 material=material,
+                aabb=aabb
             )
             primitives.append(primitive_data)
 
+        mesh_aabb = cls._min_max_to_center(mesh_min + mesh_max)
+
         mesh_data = MeshData(
             primitives=primitives,
+            aabb=mesh_aabb,
             name=node.name or "[Sem nome]"
         )
 
@@ -562,19 +728,139 @@ class ImportManager:
         return final_scene
 
     @classmethod
-    def load_scenes(cls, path: str | Path) -> list[SceneData]:
+    def load_scenes(cls, path: str | Path) -> dict[str, SceneData]:
         def command(solved_path: Path, content: GLTF2 | None):
             fallback_scene = SceneData()
 
             if not content is None:
-                scenes: list[SceneData] = []
+                scene_set: dict[str, SceneData] = {}
                 for scene in content.scenes:
-                    scenes.append(cls._create_scene(scene, content))
+                    scene_data = cls._create_scene(scene, content)
+                    scene_set[scene_data.name] = scene_data
 
-                return scenes
+                return scene_set
 
             else:
                 system.warn(f"Conteúdo de {solved_path} é vazio")
-                return [fallback_scene]
+                return {"fallback": fallback_scene}
 
-        return cls._scene_validation(path, command)
+        final_scenes = cls._scene_validation(path, command)
+        return final_scenes
+
+    @classmethod
+    def _texture_validation(cls, path: str | Path, command: Callable[..., Any]) -> Any:
+        solved_path = system.solve_path(path)
+        file_format = solved_path.suffix
+
+        if not file_format in cls._model_formats:
+            system.warn(f"Não há suporte para formato fornecido: {file_format} em {solved_path}")
+            solved_path = cls.get_model_fallback()
+            file_format = solved_path.suffix
+
+        if not solved_path.exists():
+            system.warn(f"Modelo não encontrado no caminho: {solved_path}")
+            solved_path = cls.get_model_fallback()
+            file_format = solved_path.suffix
+
+        final_texture = command(solved_path, file_format)
+        return final_texture
+
+    @classmethod
+    def load_texture(cls, path: str | Path, query: Optional[str] = None) -> Optional[TextureData]:
+        def command(solved_path: Path, file_format: str) -> Optional[TextureData]:
+            if file_format == ".glb":
+                content = GLTF2().load(solved_path) # type: ignore
+                if not content is None:
+                    first_candidate: Optional[TextureData] = None
+
+                    for index in range(len(content.textures)):
+                        texture_data = cls._get_texture(index, content)
+                        if query is None:
+                            return texture_data
+                        if first_candidate is None:
+                            first_candidate = texture_data
+                        if texture_data.name == query:
+                            return texture_data
+
+                    return first_candidate
+                else:
+                    system.warn(f"Conteúdo de {solved_path} é vazio")
+                    
+                    return None
+
+            elif file_format in (".png", ".jpeg"):
+                return cls._load_png_texture(solved_path)
+
+            else:
+                system.warn(f"Formato de modelo não suportado para arquivo em '{solved_path}'. Tente usar: {cls._model_formats}")
+                return None
+
+        final_textures = cls._texture_validation(path, command)
+        return final_textures
+
+    @classmethod
+    def load_textures(cls, path: str | Path) -> dict[str, TextureData]:
+        def command(solved_path: Path, file_format: str) -> dict[str, TextureData]:
+            if file_format == ".glb":
+                content = GLTF2().load(solved_path) # type: ignore
+                if content == None:
+                    return {}
+
+                texture_set: dict[str, TextureData] = {}
+                for index in range(len(content.textures)):
+                    texture_data = cls._get_texture(index, content)
+                    texture_set[texture_data.name] = texture_data
+
+                return texture_set
+
+            elif file_format in (".png", ".jpeg"):
+                textures: dict[str, TextureData] = {}
+                texture = cls._load_png_texture(solved_path)
+                textures[texture.name] = texture
+                return textures
+
+            else:
+                system.warn(f"Formato de modelo não suportado para arquivo em '{solved_path}'. Tente usar: {cls._model_formats}")
+                return {}
+
+        final_textures = cls._texture_validation(path, command)
+        return final_textures
+
+    @classmethod
+    def load_assets(cls, path: str | Path) -> AssetData:
+        def command(solved_path: Path, content: GLTF2 | None) -> AssetData:
+            if not content is None:
+                texture_set: dict[str, TextureData] = {}
+                for index in range(len(content.textures)):
+                    texture_data = cls._get_texture(index, content)
+                    texture_set[texture_data.name] = texture_data
+                    
+                mesh_set: dict[str, MeshData] = {}
+                for node in content.nodes:
+                    if (not node.mesh is None):
+                        mesh_data = cls._get_mesh(node, content)
+                        mesh_set[mesh_data.name] = mesh_data
+                    
+                material_set: dict[str, MaterialData] = {}
+                for index in range(len(content.materials)):
+                    material_data = cls._get_material(index, content)
+                    material_set[material_data.name] = material_data
+                
+                asset_data = AssetData(
+                    textures=texture_set,
+                    meshes=mesh_set,
+                    materials=material_set
+                )
+                return asset_data
+
+            else:
+                system.warn(f"Conteúdo de {solved_path} é vazio")
+                fallback_asset = AssetData(
+                    textures={},
+                    meshes={},
+                    materials={}
+                )
+                return fallback_asset
+
+        final_asset = cls._scene_validation(path, command)
+        return final_asset

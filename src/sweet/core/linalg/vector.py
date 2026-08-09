@@ -248,3 +248,55 @@ class Vec3(Vec):
             self.z * ox - self.x * oz,
             self.x * oy - self.y * ox
         )
+
+class Vec4(Vec):
+    @overload
+    def __init__(self) -> None: ...
+    @overload
+    def __init__(self, scalar: float, /) -> None: ...
+    @overload
+    def __init__(self, x: float, y: float, z: float, w: float, /) -> None: ...
+    @overload
+    def __init__(self, iterable: Sequence[float], /) -> None: ...
+
+    def __init__(self, *args: Any) -> None:
+        super().__init__(*args)
+        if len(self.scalars) == 0:
+            self.scalars = [0.0, 0.0, 0.0, 0.0]
+        elif len(self.scalars) == 1:
+            val = self.scalars[0]
+            self.scalars = [val, val, val, val]
+        elif len(self.scalars) != 4:
+            raise ValueError(f"Instanciação inválida. Vec4 exige exatamente 4 dimensões. Recebeu {len(self.scalars)}")
+
+    @property
+    def x(self) -> float:
+        return self.scalars[0]
+
+    @x.setter
+    def x(self, val: float) -> None:
+        self.scalars[0] = float(val)
+
+    @property
+    def y(self) -> float:
+        return self.scalars[1]
+
+    @y.setter
+    def y(self, val: float) -> None:
+        self.scalars[1] = float(val)
+
+    @property
+    def z(self) -> float:
+        return self.scalars[2]
+
+    @z.setter
+    def z(self, val: float) -> None:
+        self.scalars[2] = float(val)
+
+    @property
+    def w(self) -> float:
+        return self.scalars[3]
+
+    @w.setter
+    def w(self, val: float) -> None:
+        self.scalars[3] = float(val)

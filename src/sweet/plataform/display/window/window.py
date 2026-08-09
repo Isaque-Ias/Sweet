@@ -21,7 +21,7 @@ class WindowSurface(DisplaySurface, ABC):
         self._active: bool = False
         self._should_close: bool = False
 
-    # --- Common Window Properties ---
+    # --- win methods
 
     @abstractmethod
     def make_current(self):

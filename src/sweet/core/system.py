@@ -201,8 +201,6 @@ def crash_relatory(exception: Exception, *comp: Union[str, Component], output: O
     
     full_report = "\n".join(report_lines)
 
-    print(state.env)
-
     if state.env.crash_report:
         if output:
             filepath = solve_path(output)

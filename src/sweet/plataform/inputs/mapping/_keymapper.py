@@ -4,7 +4,7 @@ from .input_codes import Key, MouseButton
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:
-    from ...display.window.glfw import GLWindow
+    from ...display.window.moderngl import GLWindow
 
 class GenericMapper(ABC):
     @abstractmethod
