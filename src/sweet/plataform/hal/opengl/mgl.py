@@ -7,13 +7,15 @@ from .introspection import Introspect, Introspection
 
 gfx_device: "ModernGLGraphicsDevice"
 
-
 class ModernGLGPUShader(GPUShader):
     def __init__(self, source: Any):
         self.program: moderngl.Program = gfx_device.ctx.program(
             vertex_shader=source.vertex, fragment_shader=source.fragment
         )
         self._introspection = Introspect.introspect_program(self.program.glo)
+
+    def set_program_location(self, name: str, value: int) -> None:
+        self.program[name].value = value # type: ignore
 
     def get_introspection(self) -> Introspection:
         return self._introspection

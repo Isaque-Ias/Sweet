@@ -30,13 +30,12 @@ scene.add_entity(obj)
 # mrt = sw.Engine.gfx_device.create_mrt_framebuffer(1366 // 2, 768 - 300, [4, 4, 4], True)
 
 class Player(sw.GameModel):
-    def __init__(self, win):
+    def __init__(self, win: sw.WindowSurface):
         self.camera = sw.Camera()
         self.camera.position = Vec3(0, 0, 3)
         
         self.render = sw.View(sw.UpdatePolicy.EVERY_FRAME)
         self.render.set_target(win)
-        self.render.set_viewport((0, 0, 1366 // 2, 768 - 300))
         self.render.set_scene(scene)
         self.render.activate()
 
@@ -72,8 +71,9 @@ class Player(sw.GameModel):
 
         self.camera.position = self.node.position
 
-        self.cam_rot.values[0] += self.win.input.get_mouse_delta()[1] * 3.1415 / 180 * 5
-        self.cam_rot.values[1] += self.win.input.get_mouse_delta()[0] * 3.1415 / 180 * 5
+        self.cam_rot.values[0] += self.win.input.get_mouse_delta()[1] * 3.1415 / 180
+        self.cam_rot.values[0] = min(max(self.cam_rot.values[0], -3.1415 / 2), 3.1415 / 2)
+        self.cam_rot.values[1] += self.win.input.get_mouse_delta()[0] * 3.1415 / 180
 
         self.camera.rotation = self.cam_rot
 

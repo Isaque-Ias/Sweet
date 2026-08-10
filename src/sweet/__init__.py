@@ -16,6 +16,7 @@ GameModel = gameplay.entity.GameModel
 View = gameplay.view.View
 Visual = gameplay.visual.Visual
 UpdatePolicy = gameplay.view.UpdatePolicy
+WindowSurface = plataform.display.window.window.WindowSurface  # type: ignore
 
 GLWindow = plataform.display.window.moderngl.GLWindow
 Key = plataform.inputs.mapping.input_codes.Key

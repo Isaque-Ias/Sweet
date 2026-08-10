@@ -49,6 +49,8 @@ class GPUShader(ABC):
     def __init__(self, source: Any):
         pass
 
+    def set_program_location(self, name: str, value: int) -> None: ...
+
     def get_introspection(self) -> Introspection: ...
 
     @abstractmethod

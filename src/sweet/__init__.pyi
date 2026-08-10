@@ -6,7 +6,6 @@ from . import gameplay as gameplay
 from . import app as app
 from .plataform.hal.manager import RenderTarget as RenderTarget
 from .plataform.display.window.window import WindowSurface as WindowSurface # type: ignore
-from .plataform.display.window.moderngl import GLWindow as GLWindow # type: ignore
 from .plataform.inputs.mapping.input_codes import Key as Key
 from .gameplay.assets import Assets as Assets # type: ignore
 from .gameplay.entity import Entity as Entity

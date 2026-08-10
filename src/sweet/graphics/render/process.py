@@ -163,6 +163,8 @@ class PipelineManager:
                         break
 
                 outputs[input.name] = (input.location, src_output_location) # type: ignore
+                if input.type_name == "sampler2D":
+                    shader.program.set_program_location(input.name, input.location) # type: ignore
 
             output_locations = introspection.outputs.targets
             target = cls.gfx_device.create_mrt_framebuffer(1, 1, [4 for _ in range(len(output_locations))], True)
@@ -202,9 +204,12 @@ class PipelineManager:
         viewport = view.get_viewport()
         view_matrix = view.view
         projection_matrix = view.projection
-
-        if view_matrix is None or projection_matrix is None or scene is None or target is None or viewport is None:
+        
+        if view_matrix is None or projection_matrix is None or scene is None or target is None:
             return
+
+        if viewport is None:
+            viewport = (0, 0, *target.size)
         
         FrustumCulling.init_command_buffers(scene.data_track.size)
         visible = FrustumCulling.run_culling(scene, projection_matrix * view_matrix) # type: ignore
