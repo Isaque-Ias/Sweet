@@ -14,6 +14,7 @@ class Engine:
     @classmethod
     def initialize(cls, graphics_device: GraphicsDevice, display_modality: DisplayModality):
         cls.gfx_device: HAL.manager.GraphicsDevice
+        
         if graphics_device == GraphicsDevice.MODERNGL:
             cls.gfx_device = HAL.opengl.mgl.ModernGLGraphicsDevice()
             cls.gfx_device = HAL.opengl.mgl.gfx_device = cls.gfx_device

@@ -12,7 +12,8 @@ name = "sweet"
 version = "0.1.0"
 description = "Game Development Module"
 authors = [
-    { name="Isaque-Ias", "DelNailo" }
+    { name = "Isaque-Ias" },
+    { name = "DelNailo" },
 ]
 readme = "README.md"
 requires-python = ">=3.10"

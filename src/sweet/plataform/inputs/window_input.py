@@ -59,7 +59,7 @@ class WindowInput(KeyboardInterface, MouseInterface):
             self._mouse.process_mouse_event(button, ActionState.RELEASE, self._key_mapper)
 
     def _on_resize(self, width: int, height: int):
-        if self.wnd:
+        if self.wnd and hasattr(self.wnd, "ctx") and self.wnd.ctx:
             self.wnd.ctx.viewport = (0, 0, width, height)
 
     def _on_mouse_move(self, x: int, y: int, dx: int, dy: int):
