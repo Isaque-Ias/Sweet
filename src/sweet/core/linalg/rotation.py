@@ -1,7 +1,9 @@
 from enum import Enum, auto
-from .vector import Vec, Vec3, VecN, VectorLike
-from typing import Tuple, List
+from .vector import Vec3, Vec4
+from typing import Any, overload, Sequence
 import math
+from abc import ABC, abstractmethod
+
 
 class RotationModel(Enum):
     EULER_XYZ = auto()
@@ -9,122 +11,258 @@ class RotationModel(Enum):
     QUATERNION = auto()
     VECTOR = auto()
 
-class Rotation:
-    def __init__(self, values: VectorLike = Vec3(), model: RotationModel = RotationModel.VECTOR):
-            
-        self.model = model
-        if isinstance(values, Vec):
-            values = values.unp()
 
-        self.values = VecN(values)
+class Rotation(ABC):
+    @abstractmethod
+    def convert(self, target_model: RotationModel) -> Any:
+        pass
 
-    def convert(self, target_model: RotationModel) -> "Rotation":
-        if self.model == target_model:
-            return Rotation(self.values, target_model)
 
-        quat = self._to_quaternion()
+class QuaternionAngle(Vec4, Rotation):
+    @overload
+    def __init__(self) -> None: ...
 
-        new_values = self._from_quaternion(quat, target_model)
-        
-        return Rotation(new_values, target_model)
+    @overload
+    def __init__(self, scalar: float, /) -> None: ...
 
-    def _to_quaternion(self) -> Tuple[float, float, float, float]:
-        vals = self.values
+    @overload
+    def __init__(self, x: float, y: float, z: float, w: float, /) -> None: ...
 
-        if self.model == RotationModel.QUATERNION:
-            w, x, y, z = vals[0], vals[1], vals[2], vals[3]
-            norm = math.sqrt(w*w + x*x + y*y + z*z)
-            return (w / norm, x / norm, y / norm, z / norm) if norm > 0 else (1.0, 0.0, 0.0, 0.0)
+    @overload
+    def __init__(self, iterable: Sequence[float], /) -> None: ...
 
-        elif self.model == RotationModel.EULER_XYZ:
-            rx, ry, rz = vals[0] * 0.5, vals[1] * 0.5, vals[2] * 0.5
-            cx, sx = math.cos(rx), math.sin(rx)
-            cy, sy = math.cos(ry), math.sin(ry)
-            cz, sz = math.cos(rz), math.sin(rz)
+    def __init__(self, *args: Any) -> None:
+        super().__init__(*args)
+        if len(args) == 0:
+            self.scalars = [0.0, 0.0, 0.0, 1.0]
 
-            w = cx * cy * cz + sx * sy * sz
-            x = sx * cy * cz - cx * sy * sz
-            y = cx * sy * cz + sx * cy * sz
-            z = cx * cy * sz - sx * sy * cz
-            return (w, x, y, z)
+    def to_vector(self):
+        x, y, z, w = self.scalars
 
-        elif self.model == RotationModel.EULER_ZYX:
-            rz, ry, rx = vals[0] * 0.5, vals[1] * 0.5, vals[2] * 0.5
-            cz, sz = math.cos(rz), math.sin(rz)
-            cy, sy = math.cos(ry), math.sin(ry)
-            cx, sx = math.cos(rx), math.sin(rx)
+        angle = 2 * math.acos(max(-1.0, min(1.0, w)))
+        sin_half = math.sqrt(max(0.0, 1.0 - w * w))
 
-            w = cz * cy * cx + sz * sy * sx
-            x = cz * cy * sx - sz * sy * cx
-            y = cz * sy * cx + sz * cy * sx
-            z = sz * cy * cx - cz * sy * sx
-            return (w, x, y, z)
+        if sin_half < 1e-8:
+            return VectorAngle(0.0, 0.0, 0.0)
 
-        elif self.model == RotationModel.VECTOR:
-            vx, vy, vz = vals[0], vals[1], vals[2]
-            angle = math.sqrt(vx*vx + vy*vy + vz*vz)
-            if angle < 1e-8:
-                return (1.0, 0.0, 0.0, 0.0)
-            
-            half_angle = angle * 0.5
-            sin_h = math.sin(half_angle)
-            return (
-                math.cos(half_angle),
-                (vx / angle) * sin_h,
-                (vy / angle) * sin_h,
-                (vz / angle) * sin_h
-            )
+        scale = angle / sin_half
+        return VectorAngle(x * scale, y * scale, z * scale)
+
+    def to_euler_xyz(self):
+        x, y, z, w = self.scalars
+
+        sinr_cosp = 2 * (w * x + y * z)
+        cosr_cosp = 1 - 2 * (x * x + y * y)
+        rx = math.atan2(sinr_cosp, cosr_cosp)
+
+        sinp = 2 * (w * y - z * x)
+        if abs(sinp) >= 1:
+            ry = math.copysign(math.pi / 2, sinp)
+        else:
+            ry = math.asin(sinp)
+
+        siny_cosp = 2 * (w * z + x * y)
+        cosy_cosp = 1 - 2 * (y * y + z * z)
+        rz = math.atan2(siny_cosp, cosy_cosp)
+
+        return EulerAngleXYZ(rx, ry, rz)
+
+    def to_euler_zyx(self):
+        x, y, z, w = self.scalars
+
+        siny_cosp = 2 * (w * z + x * y)
+        cosy_cosp = 1 - 2 * (y * y + z * z)
+        rz = math.atan2(siny_cosp, cosy_cosp)
+
+        sinp = 2 * (w * y - z * x)
+        if abs(sinp) >= 1:
+            ry = math.copysign(math.pi / 2, sinp)
+        else:
+            ry = math.asin(sinp)
+
+        sinr_cosp = 2 * (w * x + y * z)
+        cosr_cosp = 1 - 2 * (x * x + y * y)
+        rx = math.atan2(sinr_cosp, cosr_cosp)
+
+        return EulerAngleZYX(rz, ry, rx)
+
+    def convert(self, target_model: RotationModel) -> Any:
+        if target_model == RotationModel.QUATERNION:
+            return self
+
+        elif target_model == RotationModel.EULER_XYZ:
+            return self.to_euler_xyz()
+
+        elif target_model == RotationModel.EULER_ZYX:
+            return self.to_euler_zyx()
+
+        elif target_model == RotationModel.VECTOR:
+            return self.to_vector()
 
         raise ValueError(f"Modelo de vetor degenerado. Lendo '{self.model}'")
 
-    def _from_quaternion(self, quat: Tuple[float, float, float, float], target_model: RotationModel) -> List[float]:
-        w, x, y, z = quat
 
+class VectorAngle(Vec3, Rotation):
+    @overload
+    def __init__(self) -> None: ...
+
+    @overload
+    def __init__(self, scalar: float, /) -> None: ...
+
+    @overload
+    def __init__(self, x: float, y: float, z: float, /) -> None: ...
+
+    @overload
+    def __init__(self, iterable: Sequence[float], /) -> None: ...
+
+    def __init__(self, *args: Any) -> None:
+        super().__init__(*args)
+        if len(args) == 0:
+            self.scalars = [0.0, 0.0, 0.0]
+
+    def to_quaternion(self):
+        x, y, z = self.scalars
+        angle = math.sqrt(x*x + y*y + z*z)
+
+        if angle < 1e-8:
+            return QuaternionAngle(0.0, 0.0, 0.0, 1.0)
+
+        half_angle = angle * 0.5
+        sin_h = math.sin(half_angle)
+
+        quaternion = (
+            (x / angle) * sin_h,
+            (y / angle) * sin_h,
+            (z / angle) * sin_h,
+            math.cos(half_angle)
+        )
+
+        return QuaternionAngle(*quaternion)
+
+    def to_euler_xyz(self):
+        return self.to_quaternion().to_euler_xyz()
+
+    def to_euler_zyx(self):
+        return self.to_quaternion().to_euler_zyx()
+
+    def convert(self, target_model: RotationModel) -> Any:
         if target_model == RotationModel.QUATERNION:
-            return [w, x, y, z]
+            return self.to_quaternion()
 
         elif target_model == RotationModel.EULER_XYZ:
-            sinr_cosp = 2 * (w * x + y * z)
-            cosr_cosp = 1 - 2 * (x * x + y * y)
-            rx = math.atan2(sinr_cosp, cosr_cosp)
-
-            sinp = 2 * (w * y - z * x)
-            if abs(sinp) >= 1:
-                ry = math.copysign(math.pi / 2, sinp)
-            else:
-                ry = math.asin(sinp)
-
-            siny_cosp = 2 * (w * z + x * y)
-            cosy_cosp = 1 - 2 * (y * y + z * z)
-            rz = math.atan2(siny_cosp, cosy_cosp)
-
-            return [rx, ry, rz]
+            return self.to_euler_xyz()
 
         elif target_model == RotationModel.EULER_ZYX:
-            siny_cosp = 2 * (w * z + x * y)
-            cosy_cosp = 1 - 2 * (y * y + z * z)
-            rz = math.atan2(siny_cosp, cosy_cosp)
-
-            sinp = 2 * (w * y - z * x)
-            if abs(sinp) >= 1:
-                ry = math.copysign(math.pi / 2, sinp)
-            else:
-                ry = math.asin(sinp)
-
-            sinr_cosp = 2 * (w * x + y * z)
-            cosr_cosp = 1 - 2 * (x * x + y * y)
-            rx = math.atan2(sinr_cosp, cosr_cosp)
-
-            return [rz, ry, rx]
+            return self.to_euler_zyx()
 
         elif target_model == RotationModel.VECTOR:
-            angle = 2 * math.acos(max(-1.0, min(1.0, w)))
-            sin_half = math.sqrt(max(0.0, 1.0 - w * w))
+            return self
 
-            if sin_half < 1e-8:
-                return [0.0, 0.0, 0.0]
+        raise ValueError(f"Modelo de vetor degenerado. Lendo '{self.model}'")
 
-            scale = angle / sin_half
-            return [x * scale, y * scale, z * scale]
+
+class EulerAngleXYZ(Vec3, Rotation):
+    @overload
+    def __init__(self) -> None: ...
+
+    @overload
+    def __init__(self, scalar: float, /) -> None: ...
+
+    @overload
+    def __init__(self, x: float, y: float, z: float, /) -> None: ...
+
+    @overload
+    def __init__(self, iterable: Sequence[float], /) -> None: ...
+
+    def __init__(self, *args: Any) -> None:
+        super().__init__(*args)
+        if len(args) == 0:
+            self.scalars = [0.0, 0.0, 0.0]
+
+    def to_euler_zyx(self):
+        return self.to_quaternion().to_euler_zyx()
+
+    def to_vector(self):
+        return self.to_quaternion().to_vector()
+
+    def to_quaternion(self):
+        x, y, z = self.scalars[0] * 0.5, self.scalars[1] * 0.5, self.scalars[2] * 0.5
+
+        cx, sx = math.cos(x), math.sin(x)
+        cy, sy = math.cos(y), math.sin(y)
+        cz, sz = math.cos(z), math.sin(z)
+
+        w = cx * cy * cz + sx * sy * sz
+        x = sx * cy * cz - cx * sy * sz
+        y = cx * sy * cz + sx * cy * sz
+        z = cx * cy * sz - sx * sy * cz
+
+        return QuaternionAngle(x, y, z, w)
+
+    def convert(self, target_model: RotationModel) -> Any:
+        if target_model == RotationModel.QUATERNION:
+            return self.to_quaternion()
+
+        elif target_model == RotationModel.EULER_XYZ:
+            return self
+
+        elif target_model == RotationModel.EULER_ZYX:
+            return self.to_euler_zyx()
+
+        elif target_model == RotationModel.VECTOR:
+            return self.to_vector()
+
+        raise ValueError(f"Modelo de vetor degenerado. Lendo '{self.model}'")
+
+class EulerAngleZYX(Vec3, Rotation):
+    @overload
+    def __init__(self) -> None: ...
+
+    @overload
+    def __init__(self, scalar: float, /) -> None: ...
+
+    @overload
+    def __init__(self, x: float, y: float, z: float, /) -> None: ...
+
+    @overload
+    def __init__(self, iterable: Sequence[float], /) -> None: ...
+
+    def __init__(self, *args: Any) -> None:
+        super().__init__(*args)
+        if len(args) == 0:
+            self.scalars = [0.0, 0.0, 0.0]
+
+    def to_euler_xyz(self):
+        return self.to_quaternion().to_euler_xyz()
+
+    def to_quaternion(self):
+        x, y, z = self.scalars[0] * 0.5, self.scalars[1] * 0.5, self.scalars[2] * 0.5
+        
+        cz, sz = math.cos(z), math.sin(z)
+        cy, sy = math.cos(y), math.sin(y)
+        cx, sx = math.cos(x), math.sin(x)
+
+        w = cz * cy * cx + sz * sy * sx
+        x = cz * cy * sx - sz * sy * cx
+        y = cz * sy * cx + sz * cy * sx
+        z = sz * cy * cx - cz * sy * sx
+
+        return QuaternionAngle(x, y, z, w)
+
+    def to_vector(self):
+        return self.to_quaternion().to_vector()
+
+    def convert(self, target_model: RotationModel) -> Any:
+        if target_model == RotationModel.QUATERNION:
+            return self.to_quaternion()
+
+        elif target_model == RotationModel.EULER_XYZ:
+            return self.to_euler_xyz()
+
+        elif target_model == RotationModel.EULER_ZYX:
+            return self
+
+        elif target_model == RotationModel.VECTOR:
+            return self.to_vector()
 
         raise ValueError(f"Modelo de vetor degenerado. Lendo '{self.model}'")

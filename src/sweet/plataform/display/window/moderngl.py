@@ -25,6 +25,26 @@ class _SecondaryWindowProxy:
         self._fullscreen = False
 
     @property
+    def fullscreen(self) -> bool:
+        return self._fullscreen
+
+    @fullscreen.setter
+    def fullscreen(self, value: bool):
+        self._fullscreen = value
+        if self._window:
+            monitor = glfw.get_primary_monitor()
+            if monitor:
+                mode = glfw.get_video_mode(monitor) # type: ignore
+                if mode:
+                    if value:
+                        glfw.set_window_monitor( # type: ignore
+                            self._window, monitor, 0, 0, mode.size.width, mode.size.height, mode.refresh_rate
+                        )
+                    else:
+                        w, h = self._size
+                        glfw.set_window_monitor(self._window, None, 100, 100, w, h, 0) # type: ignore
+
+    @property
     def size(self) -> tuple[int, int]:
         if self._window:
             return glfw.get_window_size(self._window) # type: ignore
@@ -222,12 +242,13 @@ class GLWindow(WindowSurface):
 
     def _create_offscreen_target(self, width: int, height: int):
         if self._offscreen_target:
-            pass
-
+            self._offscreen_target.release() # type: ignore
+            self._offscreen_target = None
+            
         self._offscreen_target = self.graphics_device.create_mrt_framebuffer(
             width=max(width, 1),
             height=max(height, 1),
-            color_formats=[4], # RGBA8
+            color_formats=[4], # RGBA
             has_depth=True
         )
 
@@ -241,30 +262,34 @@ class GLWindow(WindowSurface):
     @property
     def render_target(self) -> RenderTarget:
         if self._offscreen_target is None: # type: ignore
-            raise RuntimeError("GLWindow não possui um RenderTarget offscreen válido.")
+            raise RuntimeError("GLWindow não possui um RenderTarget offscreen válido")
         return self._offscreen_target
 
     def poll_events(self) -> bool:
         if not self.wnd or not self._active:
             return False
-        if hasattr(self.wnd, "_window") and self.wnd._window: # type: ignore
-            if glfw.window_should_close(self.wnd._window): # type: ignore
+
+        handle = self.get_native_handle()
+        if handle:
+            if glfw.window_should_close(handle): # type: ignore
                 self._should_close = True
+            
+            current_w, current_h = glfw.get_window_size(handle) # type: ignore
+            if (current_w, current_h) != self._size and current_w > 0 and current_h > 0:
+                self._size = (current_w, current_h)
+                self._create_offscreen_target(current_w, current_h)
 
         return not self._should_close
-
+    
     def swap_buffers(self):
         if self.wnd and self._offscreen_target:
-            # 1. Switch OS window context surface
             self.make_current()
 
-            # 2. Blit offscreen FBO pixels -> window's real backbuffer (ctx.screen)
             self.graphics_device.blit_texture_to_target(
                 src_target=self._offscreen_target,
                 dst_target=self._backbuffer_target
             )
 
-            # 3. Swap native GLFW buffers
             self.wnd.swap_buffers()
 
     def get_native_handle(self) -> Any:
@@ -276,6 +301,11 @@ class GLWindow(WindowSurface):
         if self._active:
             self._active = False
             self._should_close = True
+
+            if self._offscreen_target:
+                if hasattr(self._offscreen_target, 'release'):
+                    self._offscreen_target.release() # type: ignore
+                self._offscreen_target = None
 
             if self.wnd and hasattr(self.wnd, "_window") and self.wnd._window: # type: ignore
                 glfw.destroy_window(self.wnd._window) # type: ignore
@@ -296,6 +326,7 @@ class GLWindow(WindowSurface):
     def _apply_size(self, width: int, height: int) -> None:
         if self.wnd:
             self.wnd.size = (width, height)
+        self._size = (width, height)
         self._create_offscreen_target(width, height)
 
     def _apply_position(self, x: int, y: int) -> None:
@@ -306,6 +337,11 @@ class GLWindow(WindowSurface):
         self._fullscreen = enable
         if self.wnd:
             self.wnd.fullscreen = enable
+            
+            handle = self.get_native_handle()
+            if handle:
+                w, h = glfw.get_window_size(handle) # type: ignore
+                self._apply_size(w, h)
 
     @property
     def cursor_visible(self) -> bool:

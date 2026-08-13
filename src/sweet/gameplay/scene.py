@@ -62,7 +62,7 @@ class SceneDataTrack:
         if initial_trs is not None:
             self.transforms[index] = [
                 *initial_trs.position, 
-                *initial_trs.rotation.values, 
+                *initial_trs.rotation.scalars, 
                 *initial_trs.scale
             ]
         else:
@@ -99,7 +99,7 @@ class SceneDataTrack:
 
         self.transforms[index] = [
             *trs.position, 
-            *trs.rotation.values, 
+            *trs.rotation.scalars, 
             *trs.scale
         ]
         self.boundings[index] = aabb

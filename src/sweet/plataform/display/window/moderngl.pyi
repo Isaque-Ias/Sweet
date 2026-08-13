@@ -4,7 +4,6 @@ from sweet.plataform.display.manager import DisplaySurface
 from sweet.plataform.inputs.window_input import WindowInput
 from ...hal.manager import GraphicsDevice, RenderTarget
 
-
 class GLWindow(DisplaySurface):
     background_color: tuple[float, float, float, float]
     title: str

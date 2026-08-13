@@ -2,7 +2,7 @@ from enum import Enum, auto
 import glm
 from dataclasses import dataclass
 from abc import ABC
-from ..core.linalg.rotation import Rotation, RotationModel
+from ..core.linalg.rotation import Rotation, RotationModel, QuaternionAngle
 from ..core.linalg.vector import Vec3
 
 class Projection(ABC):
@@ -27,7 +27,7 @@ class Orthographic(Projection):
     far: float
 
 class Camera:
-    def __init__(self, position: Vec3 = Vec3(0, 0, 0), rotation: Rotation = Rotation(Vec3(), RotationModel.VECTOR), projection: Projection | None = None):
+    def __init__(self, position: Vec3 = Vec3(0, 0, 0), rotation: Rotation = QuaternionAngle(), projection: Projection | None = None):
         self.position = position
         self.rotation = rotation
 
@@ -36,8 +36,8 @@ class Camera:
         else:
             self.projection: Projection = Perspective(
                 fov = 60.0,
-                aspect = 16 / 9,
-                near = 0.1,
+                aspect = 1366 / 768,
+                near = 0.001,
                 far = 1000.0
             )
 
@@ -45,9 +45,9 @@ class Camera:
 
     def view_matrix(self) -> glm.mat4x4:
         transform = glm.translate(glm.mat4(1), self.position.unp()) # type: ignore
-        rotation_values = (self.rotation).convert(RotationModel.QUATERNION).values
-        transform *= glm.mat4_cast((rotation_values).unp()) # type: ignore
-
+        x, y, z, w = self.rotation.convert(RotationModel.QUATERNION).scalars
+        quat = glm.quat(w, x, y, z)
+        transform *= glm.mat4_cast(quat) # type: ignore
         return glm.inverse(transform) # type: ignore
 
     def projection_matrix(self) -> glm.mat4x4:

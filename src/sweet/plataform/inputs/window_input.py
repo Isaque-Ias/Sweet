@@ -61,6 +61,7 @@ class WindowInput(KeyboardInterface, MouseInterface):
     def _on_resize(self, width: int, height: int):
         if self.wnd and hasattr(self.wnd, "ctx") and self.wnd.ctx:
             self.wnd.ctx.viewport = (0, 0, width, height)
+        self.window._apply_size(width, height)
 
     def _on_mouse_move(self, x: int, y: int, dx: int, dy: int):
         self._mouse.update_mouse_pos(x, y)
@@ -80,6 +81,7 @@ class WindowInput(KeyboardInterface, MouseInterface):
     # --- alt ---
 
     def _glfw_resize(self, window: Any, width: int, height: int):
+        self.window._apply_size(width, height)
         self._on_resize(width, height)
 
     def _glfw_key(self, window: Any, key: int, scancode: int, action: int, mods: KeyModifiers):
@@ -93,7 +95,6 @@ class WindowInput(KeyboardInterface, MouseInterface):
             self._on_mouse_release(int(x), int(y), button)
 
     def _glfw_cursor_pos(self, window: Any, xpos: float, ypos: float):
-        # Retrieve or compute delta if needed by _on_mouse_move
         dx = xpos - getattr(self, "_last_x", xpos)
         dy = ypos - getattr(self, "_last_y", ypos)
         self._last_x, self._last_y = xpos, ypos

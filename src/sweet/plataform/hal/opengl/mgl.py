@@ -186,7 +186,7 @@ class ModernGLWindowTarget(RenderTarget):
 
     @property
     def size(self) -> tuple[int, int]:
-        return self.ctx.screen.size
+        return self.window._size
 
     @property
     def color_textures(self) -> list[Texture2D]:
@@ -460,7 +460,7 @@ class ModernGLCommandBuffer(CommandBuffer):
         self,
         dst_target: RenderTarget,
         src_attachment: int | str,
-        dst_attachment: int | str,
+        dst_attachment: int | str
     ) -> None:
         def cmd_redirect():
             src_target = self._current_target
@@ -542,7 +542,7 @@ class ModernGLGraphicsDevice(GraphicsDevice):
     ) -> None:
         if not self.ctx:
             raise RuntimeError("Context ModernGL não foi inicializado")
-
+    
         is_src_depth = src_attachment == "depth"
         is_dst_depth = dst_attachment == "depth"
         if is_src_depth != is_dst_depth:

@@ -9,6 +9,7 @@ from typing import Any, TYPE_CHECKING
 import numpy as np
 import glm
 from PIL import Image
+from dataclasses import dataclass, field
 
 if TYPE_CHECKING:
     from ...gameplay.view import View
@@ -26,7 +27,8 @@ class RenderPass:
     uniforms: list[Uniform]
     output_location_map: dict[str, tuple[int, int]]
     target: RenderTarget
-    drive: str
+    target_cache: dict[tuple[int, int], RenderTarget] = field(default_factory=dict) # type: ignore
+    drive: str = "scene"
 
 class PipelineManager:
     _initialized = False
@@ -167,7 +169,10 @@ class PipelineManager:
                     shader.program.set_program_location(input.name, input.location) # type: ignore
 
             output_locations = introspection.outputs.targets
-            target = cls.gfx_device.create_mrt_framebuffer(1, 1, [4 for _ in range(len(output_locations))], True)
+            target = cls.gfx_device.create_mrt_framebuffer(1280, 720, [4 for _ in range(len(output_locations))], True)
+
+            initial_width, initial_height = 1280, 720
+            target_cache = {(initial_width, initial_height): target}
 
             drive = "scene" if "sw_RenderObjects" in list(map(lambda x: x[2], ssbo_bindings)) else "screen"
 
@@ -177,6 +182,7 @@ class PipelineManager:
                 uniforms=uniforms,
                 output_location_map=outputs,
                 target=target,
+                target_cache=target_cache,
                 drive=drive
             )
 
@@ -209,7 +215,28 @@ class PipelineManager:
             return
 
         if viewport is None:
-            viewport = (0, 0, *target.size)
+            if win_surface:
+                viewport = (0, 0, *win_surface.render_target.size)
+            elif target:
+                viewport = (0, 0, *target.size)
+            else:
+                viewport = (0, 0, 1280, 720)
+
+        vp_width, vp_height = viewport[2], viewport[3]
+
+        for render_pass in cls._render_passes:
+            current_w, current_h = render_pass.target.size
+            
+            if current_w != vp_width or current_h != vp_height:
+                if (vp_width, vp_height) in render_pass.target_cache:
+                    render_pass.target = render_pass.target_cache[(vp_width, vp_height)]
+                else:
+                    total_outputs = len(render_pass.target.color_textures)
+                    new_target = cls.gfx_device.create_mrt_framebuffer(
+                        vp_width, vp_height, [4 for _ in range(total_outputs)], True
+                    )
+                    render_pass.target_cache[(vp_width, vp_height)] = new_target
+                    render_pass.target = new_target
         
         FrustumCulling.init_command_buffers(scene.data_track.size)
         visible = FrustumCulling.run_culling(scene, projection_matrix * view_matrix) # type: ignore
@@ -263,11 +290,6 @@ class PipelineManager:
         last_target: Optional[RenderTarget] = None
 
         for i, render_pass in enumerate(cls._render_passes):
-            if viewport[2] > render_pass.target.size[0] or viewport[3] > render_pass.target.size[1]:
-                total_outputs = len(render_pass.target.color_textures)
-                render_pass.target.release()
-                render_pass.target = cls.gfx_device.create_mrt_framebuffer(viewport[2], viewport[3], [4 for _ in range(total_outputs)], True)
-
             cmd.begin_render_pass(target=render_pass.target, viewport=viewport, clear_color=(1.0, 0.0, 0.5))
             cmd.set_pipeline(render_pass.pipeline)
 
@@ -295,17 +317,9 @@ class PipelineManager:
                     instance_count=1
                 )
 
-            if i + 1 < len(cls._render_passes):
-                pass
-                # for name, attachment in render_pass.outputs:
-                #     cls.set_uniform_value(name, struct.pack("i", attachment))
-                # following_target = cls._render_passes[i + 1].target
-                # cmd.redirect(following_target, 0, 0)
-            else:
-                if win_surface is None:
-                    cmd.redirect(target, 0, 0)
-                else:
-                    cmd.redirect(win_surface.render_target, 0, 0)
+            if i + 1 == len(cls._render_passes):
+                dest_target = target if win_surface is None else win_surface.render_target
+                cmd.redirect(dest_target, 0, 0)
             
             cmd.end_render_pass()
 

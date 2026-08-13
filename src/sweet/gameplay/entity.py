@@ -2,9 +2,9 @@ from __future__ import annotations
 from collections import defaultdict
 import inspect
 from abc import ABC, abstractmethod
-from ..core.linalg.vector import Vec3, Vec4
+from ..core.linalg.vector import Vec3
 from .components import Component
-from ..core.linalg.rotation import Rotation, RotationModel
+from ..core.linalg.rotation import Rotation, RotationModel, QuaternionAngle
 from .visual import Visual
 from typing import Sequence, Callable, Any, Optional, TYPE_CHECKING
 from ..core import system
@@ -46,9 +46,9 @@ class Entity:
         self._depth: int = 0
     
         self._transform = TRS(
-            position = Vec3(0, 0, 0),
-            rotation = Rotation(Vec4(0, 0, 0, 1), RotationModel.QUATERNION),
-            scale = Vec3(1, 1, 1),
+            position = Vec3(),
+            rotation = QuaternionAngle(),
+            scale = Vec3(1),
         )
 
         self._script: Callable[..., None] | None = None
@@ -144,8 +144,9 @@ class Entity:
         return self._transform.rotation
 
     @rotation.setter
-    def rotation(self, value: Sequence[float] | Vec3, angle_model: RotationModel=RotationModel.VECTOR):
-        self._transform.rotation = Rotation(Vec3.from_iter(value), angle_model).convert(RotationModel.QUATERNION)
+    def rotation(self, value: Rotation):
+        angle = value.convert(RotationModel.QUATERNION)
+        self._transform.rotation = angle
         self._mark_transform_dirty()
 
     @property
