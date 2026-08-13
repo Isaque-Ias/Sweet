@@ -10,6 +10,7 @@ import numpy as np
 import glm
 from PIL import Image
 from dataclasses import dataclass, field
+from enum import Enum, auto
 
 if TYPE_CHECKING:
     from ...gameplay.view import View
@@ -20,6 +21,13 @@ class Uniform:
     type_name: str
     location: int
 
+class RenderDomain(Enum):
+    SCREEN = auto()
+    SCENE = auto()
+    LIGHT = auto()
+    CAMERA = auto()
+    PROBE = auto()
+
 @dataclass
 class RenderPass:
     pipeline: RenderPipeline
@@ -28,7 +36,7 @@ class RenderPass:
     output_location_map: dict[str, tuple[int, int]]
     target: RenderTarget
     target_cache: dict[tuple[int, int], RenderTarget] = field(default_factory=dict) # type: ignore
-    drive: str = "scene"
+    drive: RenderDomain = RenderDomain.SCENE
 
 class PipelineManager:
     _initialized = False
@@ -109,7 +117,8 @@ class PipelineManager:
             "u_light_color": struct.pack('3f', 1, 1, 1),
         }
 
-        for shader in cls._graph.graph.active_passes[:2]:
+        print(list(map(lambda x: x.name, cls._graph.graph.active_passes)))
+        for shader in cls._graph.graph.active_passes:
             shader_program: GPUShader = shader.program # type: ignore
             introspection = shader_program.get_introspection()
             ssbos = introspection.inputs.ssbos
@@ -174,7 +183,7 @@ class PipelineManager:
             initial_width, initial_height = 1280, 720
             target_cache = {(initial_width, initial_height): target}
 
-            drive = "scene" if "sw_RenderObjects" in list(map(lambda x: x[2], ssbo_bindings)) else "screen"
+            drive = RenderDomain.SCENE if "sw_RenderObjects" in list(map(lambda x: x[2], ssbo_bindings)) else RenderDomain.SCREEN
 
             render_pass = RenderPass(
                 pipeline=pipeline,
@@ -306,7 +315,7 @@ class PipelineManager:
 
             cmd.set_resource_set(set_index=0, resource_set=render_pass.resource_set)
 
-            if render_pass.drive == "scene":
+            if render_pass.drive == RenderDomain.SCENE:
                 cmd.draw(
                     vertex_count=max_indices_in_batch,
                     instance_count=object_count,
