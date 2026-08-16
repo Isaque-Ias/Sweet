@@ -6,6 +6,7 @@ from ..core.linalg.vector import Vec3
 from .components import Component
 from ..core.linalg.rotation import Rotation, RotationModel, QuaternionAngle
 from .visual import Visual
+from .light import Light
 from typing import Sequence, Callable, Any, Optional, TYPE_CHECKING
 from ..core import system
 from ..resources.common import TRS
@@ -41,6 +42,7 @@ class Entity:
         self._components: dict[str, list[Any]] = defaultdict(list)
         self._aabb: list[float] = [0, 0, 0, 0, 0, 0]
         self._visuals: list[tuple[Optional[int], Visual]] = []
+        self._lights: list[Light] = []
 
         self._children: list[Entity] = []
         self._depth: int = 0
@@ -80,6 +82,12 @@ class Entity:
 
     def get_components(self, element: type) -> list[Component]:
         return self._components[str(element)]
+
+    def get_lights(self) -> list[Light]:
+        return self._lights
+
+    def add_light(self, light: Light) -> None:
+        self._lights.append(light)
 
     @property
     def scene(self):

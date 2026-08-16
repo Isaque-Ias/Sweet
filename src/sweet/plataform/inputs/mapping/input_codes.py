@@ -31,6 +31,10 @@ class Key(Enum):
     Z = auto()
 
     SPACE = auto()
+    LEFT_SHIFT = auto()
+    RIGHT_SHIFT = auto()
+    LEFT_CTRL = auto()
+    RIGHT_CTRL = auto()
     ESCAPE = auto()
     CAPS_LOCK = auto()
 

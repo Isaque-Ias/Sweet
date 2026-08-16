@@ -6,7 +6,7 @@ from ..core.linalg.rotation import Rotation, RotationModel, QuaternionAngle
 from ..core.linalg.vector import Vec3
 
 class Projection(ABC):
-    pass
+    aspect: float
 
 class CameraMode(Enum):
     PERSPECTIVE = auto()

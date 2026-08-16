@@ -1,7 +1,7 @@
 #version 460 core
 
-layout(location = 0) out vec4 out_albedo;
-layout(location = 1) out vec4 out_normal;
+layout(location = 0) out vec4 GBuffer_Albedo;
+layout(location = 1) out vec4 GBuffer_Normals;
 
 in vec3 v_world_position;
 in vec3 v_world_normal;
@@ -30,9 +30,9 @@ void main()
     vec3 encoded_normal =
         normal * 0.5 + 0.5;
 
-    out_albedo =
+    GBuffer_Albedo =
         vec4(albedo, 1.0);
 
-    out_normal =
+    GBuffer_Normals =
         vec4(encoded_normal, 1.0);
 }

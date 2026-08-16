@@ -4,13 +4,13 @@ in vec2 v_uv;
 
 layout(location = 0) out vec4 out_color;
 
-uniform sampler2D sw_Lighting;
+uniform sampler2D Present_Light;
 
 void main()
 {
     vec3 color =
         texture(
-            sw_Lighting,
+            Present_Light,
             v_uv
         ).rgb;
 

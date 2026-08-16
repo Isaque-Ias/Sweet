@@ -1,6 +1,7 @@
 from __future__ import annotations
 from sweet.plataform.display.window.window import WindowSurface
 from ..upload import UploadManager, GPUMeshSource
+from sweet.resources.assets.importer import ImportManager
 from ...plataform.hal.manager import *
 from .visibility.frustum import FrustumCulling
 from .graph.families.surface import Deffered
@@ -10,10 +11,19 @@ import numpy as np
 import glm
 from PIL import Image
 from dataclasses import dataclass, field
-from enum import Enum, auto
+from .graph.render_graph import RenderDomain
+from pathlib import Path
+import moderngl
 
 if TYPE_CHECKING:
     from ...gameplay.view import View
+
+@dataclass
+class ShaderResource:
+    source: str
+    source_attachment: int
+    dest_location: int
+    is_imported: bool
 
 @dataclass
 class Uniform:
@@ -21,22 +31,16 @@ class Uniform:
     type_name: str
     location: int
 
-class RenderDomain(Enum):
-    SCREEN = auto()
-    SCENE = auto()
-    LIGHT = auto()
-    CAMERA = auto()
-    PROBE = auto()
-
 @dataclass
 class RenderPass:
+    name: str
     pipeline: RenderPipeline
     resource_set: ResourceSet
     uniforms: list[Uniform]
-    output_location_map: dict[str, tuple[int, int]]
+    resource_map: dict[str, ShaderResource]
     target: RenderTarget
     target_cache: dict[tuple[int, int], RenderTarget] = field(default_factory=dict) # type: ignore
-    drive: RenderDomain = RenderDomain.SCENE
+    domain: RenderDomain = RenderDomain.SCENE
 
 class PipelineManager:
     _initialized = False
@@ -48,21 +52,88 @@ class PipelineManager:
     global_set: ResourceSet
     pipeline: RenderPipeline
 
+    @staticmethod
+    def get_component_sizes(attributes: list[Attribute]) -> list[int]:
+        component_map: dict[str, int] = {
+            'float': 1,
+            'vec2': 2,
+            'vec3': 3,
+            'vec4': 4,
+            # Integer mapping if your types use int/uint variants
+            'int': 1, 'ivec2': 2, 'ivec3': 3, 'ivec4': 4,
+            'uint': 1, 'uvec2': 2, 'uvec3': 3, 'uvec4': 4,
+        }
+    
+        type_int_map: dict[int, int] = {
+            5126: 1,   # float
+            35664: 2,  # vec2
+            35665: 3,  # vec3
+            35666: 4,  # vec4
+        }
+
+        components: list[int] = []
+        sorted_attrs = sorted(attributes, key=lambda attr: attr.location)
+        
+        for attr in sorted_attrs:
+            if attr.type_int in type_int_map:
+                components.append(type_int_map[attr.type_int])
+            elif attr.type_name in component_map:
+                components.append(component_map[attr.type_name])
+            else:
+                components.append(4) 
+                
+        return components
+
     @classmethod
-    def save_mrt_fbo_to_png(cls, fbo: Any, attachment_index: int, filename: str):
+    def save_mrt_fbo_to_png(
+        cls,
+        fbo: Any,
+        attachment_index: Union[int, str],
+        filename: str,
+        near: float = 0.1,
+        far: float = 100.0,
+    ):
         width, height = fbo.size
+        is_depth = attachment_index in (-1, "depth")
 
-        raw_bytes = fbo.read(
-            viewport=(0, 0, width, height),
-            components=4,
-            attachment=attachment_index
-        )
+        if is_depth:
+            # 1. Read depth buffer as 32-bit floats
+            raw_bytes = fbo.read(
+                viewport=(0, 0, width, height),
+                components=1,
+                attachment=-1,
+                dtype="f4",
+            )
 
-        img = Image.frombytes('RGBA', (width, height), raw_bytes)
+            depth_data = np.frombuffer(raw_bytes, dtype=np.float32).reshape(
+                (height, width)
+            )
+
+            depth_data = (2.0 * near * far) / (
+                far + near - (2.0 * depth_data - 1.0) * (far - near)
+            )
+            depth_data = (depth_data - near) / (far - near)
+
+            depth_grayscale = (np.clip(depth_data, 0.0, 1.0) * 255.0).astype(
+                np.uint8
+            )
+
+            img = Image.fromarray(depth_grayscale, mode="L")
+
+        else:
+            raw_bytes = fbo.read(
+                viewport=(0, 0, width, height),
+                components=4,
+                attachment=int(attachment_index),
+            )
+            img = Image.frombytes("RGBA", (width, height), raw_bytes)
+
         img = img.transpose(Image.Transpose.FLIP_TOP_BOTTOM)
 
         img.save(filename)
-        print(f"[Debug] Saved FBO attachment [{attachment_index}] -> {filename}")
+        print(
+            f"[Debug] Saved FBO {'depth' if is_depth else f'attachment [{attachment_index}]'} -> {filename}"
+        )
 
     @classmethod
     def save_all_mrt_attachments(cls, fbo: Any, prefix: str = "gbuffer"):
@@ -113,13 +184,25 @@ class PipelineManager:
             "sw_Projection": bytearray(),
             "sw_NearPlane": bytearray(),
             "sw_FarPlane": bytearray(),
-            "u_light_direction": struct.pack('3f', -1, 1, 0),
-            "u_light_color": struct.pack('3f', 1, 1, 1),
+            "sw_LightColor": struct.pack('3f', 1, 1, 1),
         }
 
-        print(list(map(lambda x: x.name, cls._graph.graph.active_passes)))
+        cls._resources: dict[str, RenderTarget] = {}
+        cls._imported_resources: dict[str, Texture2D] = {}
+
+        texture = cls.gfx_device.create_texture2d(4, 4, 3)
+        BASE = Path(__file__).parent
+        texture_data = ImportManager.load_texture(BASE / "passes" / "ssao" / "noise.png")
+        rgb_image = texture_data.source.convert("RGB") # type: ignore
+        texture.upload_pixels(rgb_image.tobytes(), 4, 4) # type: ignore
+        texture.texture.repeat_x = True # type: ignore
+        texture.texture.repeat_y = True # type: ignore
+        texture.texture.filter = (moderngl.NEAREST, moderngl.NEAREST) # type: ignore
+        cls._imported_resources["SSAO_Noise"] = texture
+        
         for shader in cls._graph.graph.active_passes:
             shader_program: GPUShader = shader.program # type: ignore
+
             introspection = shader_program.get_introspection()
             ssbos = introspection.inputs.ssbos
             ssbo_bindings: list[tuple[int, ResourceType, str]] = []
@@ -159,40 +242,59 @@ class PipelineManager:
                 )
             )
 
-            outputs: dict[str, tuple[int, int]] = {}
+            inputs: dict[str, ShaderResource] = {}
+
             for input in introspection.inputs.uniforms:
                 dependent = shader.dependencies.get(input.name)
+                
                 if dependent is None:
+                    if input.type_name == "sampler2D":
+                        inputs[input.name] = ShaderResource(source=input.name, source_attachment=src_output_location, dest_location=input.location, is_imported=True) # type: ignore
+                        shader.program.set_program_location(input.name, input.location) # type: ignore
+
                     continue
+
                 src_name, src_shader = dependent
 
                 src_output_location = None
                 src_introspection = src_shader.program.get_introspection() # type: ignore
+
+                if src_name[:6] == "depth_":
+                    src_output_location = -1
+                    
                 for output in src_introspection.outputs.targets:
                     if output.name == src_name:
                         src_output_location = output.location
                         break
 
-                outputs[input.name] = (input.location, src_output_location) # type: ignore
+                source = src_shader.name
+                inputs[input.name] = ShaderResource(source=source, source_attachment=src_output_location, dest_location=input.location, is_imported=False) # type: ignore
+
                 if input.type_name == "sampler2D":
                     shader.program.set_program_location(input.name, input.location) # type: ignore
 
             output_locations = introspection.outputs.targets
-            target = cls.gfx_device.create_mrt_framebuffer(1280, 720, [4 for _ in range(len(output_locations))], True)
+            
+            output_components = cls.get_component_sizes(output_locations)
 
+            target = cls.gfx_device.create_mrt_framebuffer(1280, 720, output_components, True)
+
+            cls._resources[shader.name] = target
+            
             initial_width, initial_height = 1280, 720
             target_cache = {(initial_width, initial_height): target}
 
-            drive = RenderDomain.SCENE if "sw_RenderObjects" in list(map(lambda x: x[2], ssbo_bindings)) else RenderDomain.SCREEN
+            domain = shader.domain
 
             render_pass = RenderPass(
                 pipeline=pipeline,
                 resource_set=shader_set,
                 uniforms=uniforms,
-                output_location_map=outputs,
+                resource_map=inputs,
                 target=target,
                 target_cache=target_cache,
-                drive=drive
+                domain=domain,
+                name=shader.name
             )
 
             cls._render_passes.append(render_pass)
@@ -246,6 +348,7 @@ class PipelineManager:
                     )
                     render_pass.target_cache[(vp_width, vp_height)] = new_target
                     render_pass.target = new_target
+                    cls._resources[render_pass.name] = new_target
         
         FrustumCulling.init_command_buffers(scene.data_track.size)
         visible = FrustumCulling.run_culling(scene, projection_matrix * view_matrix) # type: ignore
@@ -286,9 +389,31 @@ class PipelineManager:
         if object_count == 0 or len(render_obj_buffer) == 0:
             return
 
+        light = scene.get_lights()[0]
+        light_view_matrix = light.get_view()
+        light_projection_matrix = light.get_projection()
+
         cls.set_uniform_value("sw_View", view_matrix)
+        cls.set_uniform_value("sw_InvView", glm.inverse(view_matrix)) # type: ignore
         cls.set_uniform_value("sw_Projection", projection_matrix)
-                
+        cls.set_uniform_value("sw_InvProjection", glm.inverse(projection_matrix)) # type: ignore
+        
+        cls.set_uniform_value("sw_LightView", light_view_matrix)#glm.lookAt(light_eye, light_center, light_up)) # type: ignore
+        cls.set_uniform_value("sw_LightProjection", light_projection_matrix)#glm.perspective(1, 1, 0.1, 30)) # type: ignore
+
+        light_dir = light.direction
+        cls.set_uniform_value("sw_LightDirection", struct.pack('3f', light_dir.x, light_dir.y, light_dir.z))
+        
+        cls.set_uniform_value("sw_ShadowMapSize", struct.pack('2f', vp_width, vp_height))
+
+        cls.set_uniform_value("sw_Resolution", struct.pack('2f', -vp_width, vp_height))
+        cls.set_uniform_value("sw_Radius", struct.pack('1f', 0.1))
+        cls.set_uniform_value("sw_Bias", struct.pack('1f', 0.025))
+
+        cam_pos = glm.inverse(view_matrix)[3].xyz # type: ignore
+        cls.set_uniform_value("sw_CameraPosition", struct.pack('3f', cam_pos.x, cam_pos.y, cam_pos.z)) # type: ignore
+        cls.set_uniform_value("sw_AmbientStrength", struct.pack('f', 0.3))
+        
         cmd = cls.gfx_device.create_command_buffer()
         cmd.begin()
         if isinstance(win_surface, WindowSurface) and hasattr(win_surface, 'make_current'):
@@ -296,35 +421,34 @@ class PipelineManager:
 
         cls.packet_buffer.upload_data(render_obj_buffer)
 
-        last_target: Optional[RenderTarget] = None
-
         for i, render_pass in enumerate(cls._render_passes):
             cmd.begin_render_pass(target=render_pass.target, viewport=viewport, clear_color=(1.0, 0.0, 0.5))
             cmd.set_pipeline(render_pass.pipeline)
 
-            if not last_target is None:
-                for dst_input_location, src_output_location in render_pass.output_location_map.values():
-                    cmd.use_texture(src_render_target=last_target, src_attachment=src_output_location, location=dst_input_location)
-
-            last_target = render_pass.target
+            for resource in render_pass.resource_map.values():
+                if resource.is_imported:
+                    cmd.use_texture(cls._imported_resources[resource.source], location=resource.dest_location)
+                else:
+                    cmd.use_target_texture(src_render_target=cls._resources[resource.source], src_attachment=resource.source_attachment, location=resource.dest_location)
 
             for uniform in render_pass.uniforms:
                 value = cls.get_uniform_value(uniform.name)
-                if not value is None: 
+                if not value is None:
                     cmd.set_uniform_value(uniform.name, value)
 
             cmd.set_resource_set(set_index=0, resource_set=render_pass.resource_set)
 
-            if render_pass.drive == RenderDomain.SCENE:
+            if render_pass.domain == RenderDomain.SCENE:
                 cmd.draw(
                     vertex_count=max_indices_in_batch,
                     instance_count=object_count,
                 )
-            else:
+            elif render_pass.domain == RenderDomain.SCREEN:
                 cmd.draw(
                     vertex_count=3,
                     instance_count=1
                 )
+
 
             if i + 1 == len(cls._render_passes):
                 dest_target = target if win_surface is None else win_surface.render_target

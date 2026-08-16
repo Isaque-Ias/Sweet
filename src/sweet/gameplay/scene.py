@@ -3,6 +3,7 @@ from typing import Sequence, Callable, Optional
 from ..resources.common import TRS
 from .entity import Entity
 from .visual import Visual
+from .light import Light
 from sweet.plataform.hal.manager import ResourceType
 import numpy as np
 from ..plataform.hal.manager import GraphicsDevice
@@ -163,6 +164,14 @@ class Scene:
             self.add_entity(entities)
 
         SceneManager.add_scene(self)
+
+    def get_lights(self):
+        lights: list[Light] = []
+        for root in self._entities:
+            for entity in root.flatten_leaves_first:
+                lights.extend(entity.get_lights())
+
+        return lights
 
     def add_entity(self, entity: Sequence[Entity] | Entity):
         entity_list = [entity] if isinstance(entity, Entity) else entity

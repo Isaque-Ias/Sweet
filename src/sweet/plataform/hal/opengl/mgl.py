@@ -4,6 +4,8 @@ from sweet.plataform.hal.manager import *
 from typing import Any, Optional, Callable, cast, Union
 from sweet.plataform.hal.manager import RenderTarget
 from .introspection import Introspect, Introspection
+import numpy as np
+from PIL import Image
 
 gfx_device: "ModernGLGraphicsDevice"
 
@@ -70,7 +72,6 @@ class ModernGLTexture2D(Texture2D):
     def release(self):
         if self.texture:
             self.texture.release()
-
 
 class ModernGLResourceLayout(ResourceLayout):
     def __init__(self, bindings: list[tuple[int, ResourceType]]):
@@ -374,12 +375,21 @@ class ModernGLCommandBuffer(CommandBuffer):
         self._current_ibo = buffer
 
     def use_texture(
+        self, src_texture: Texture2D, location: int
+    ) -> None:
+        def use():
+            src_texture.texture.use(location=location) # type: ignore
+
+        self._commands.append(use)
+
+    def use_target_texture(
         self, src_render_target: RenderTarget, src_attachment: int, location: int
     ) -> None:
         def use():
-            src_render_target.framebuffer.color_attachments[src_attachment].use(
-                location=location
-            )
+            if src_attachment == -1:
+                src_render_target.framebuffer.depth_attachment.use(location=location)
+            else:
+                src_render_target.framebuffer.color_attachments[src_attachment].use(location=location)
 
         self._commands.append(use)
 
@@ -456,6 +466,102 @@ class ModernGLCommandBuffer(CommandBuffer):
 
         self._commands.append(cmd_draw_indexed)
 
+    def _save_image(self, fb: RenderTarget, name: str):
+        def cmd_save():
+            if fb:
+                for i in range(len(fb.framebuffer.color_attachments)):
+                    self._save_attachment_image(fb.framebuffer, i, str(name) + f"_{i}" + ".png")
+                if fb.depth_texture:
+                    self._save_attachment_image(fb.framebuffer, -1, str(name) + ".png")
+
+        self._commands.append(cmd_save)
+
+    def _save_attachment_image(
+        self,
+        fbo: Any,
+        attachment_index: Union[int, str],
+        filename: str,
+        near: float = 0.1,
+        far: float = 100.0,
+    ):
+        width, height = fbo.size
+        is_depth = attachment_index in (-1, "depth")
+
+        if is_depth:
+            raw_bytes = fbo.read(
+                viewport=(0, 0, width, height),
+                components=1,
+                attachment=-1,
+                dtype="f4",
+            )
+
+            depth_data = np.frombuffer(raw_bytes, dtype=np.float32).reshape(
+                (height, width)
+            )
+
+            depth_data = (2.0 * near * far) / (
+                far + near - (2.0 * depth_data - 1.0) * (far - near)
+            )
+            depth_data = (depth_data - near) / (far - near)
+
+            depth_grayscale = (np.clip(depth_data, 0.0, 1.0) * 255.0).astype(
+                np.uint8
+            )
+
+            img = Image.fromarray(depth_grayscale, mode="L")
+
+        else:
+            idx = int(attachment_index)
+            attachment_texture = fbo.color_attachments[idx]
+            
+            channels = attachment_texture.components  # Can be 1, 2, 3, or 4
+            texture_dtype = attachment_texture.dtype  # e.g., 'f1' (u8) or 'f4' (float32)
+            
+            raw_bytes = fbo.read(
+                viewport=(0, 0, width, height),
+                components=channels,
+                attachment=idx,
+            )
+
+            # 3. Map component count to the correct Pillow mode
+            # Note: Pillow does not support a native 2-channel mode. 
+            # If it's 2 channels (RG), we pad it to RGB (3 channels) for compatibility.
+            if channels == 1:
+                pil_mode = "L"
+            elif channels == 3:
+                pil_mode = "RGB"
+            elif channels == 4:
+                pil_mode = "RGBA"
+            elif channels == 2:
+                pil_mode = "RGB"
+                np_type = np.float32 if "4" in texture_dtype else np.uint8
+                parsed = np.frombuffer(raw_bytes, dtype=np_type).reshape((height, width, 2))
+                
+                if np_type == np.float32:
+                    parsed = (np.clip(parsed, 0.0, 1.0) * 255.0).astype(np.uint8)
+                    
+                padded = np.zeros((height, width, 3), dtype=np.uint8)
+                padded[..., :2] = parsed
+                img = Image.fromarray(padded, mode="RGB")
+                channels = "2 (Padded to RGB)"
+
+            if channels != "2 (Padded to RGB)":
+                if "4" in texture_dtype:
+                    floats = np.frombuffer(raw_bytes, dtype=np.float32)
+                    shape = (height, width, channels) if channels > 1 else (height, width)
+                    floats = floats.reshape(shape)
+                    bytes_data = (np.clip(floats, 0.0, 1.0) * 255.0).astype(np.uint8)
+                    img = Image.fromarray(bytes_data, mode=pil_mode) # type: ignore
+                else:
+                    img = Image.frombytes(pil_mode, (width, height), raw_bytes) # type: ignore
+
+        img = img.transpose(Image.Transpose.FLIP_TOP_BOTTOM) # type: ignore
+        img.save(filename)
+        
+        print(
+            f"[Debug] Saved FBO {'depth' if is_depth else f'attachment [{attachment_index}] ({channels} channels)'} -> {filename}" # type: ignore
+        )
+
     def redirect(
         self,
         dst_target: RenderTarget,
@@ -472,7 +578,7 @@ class ModernGLCommandBuffer(CommandBuffer):
         self._commands.append(cmd_redirect)
 
     def end_render_pass(self) -> None:
-        pass
+        return
 
     def end(self) -> None:
         pass
@@ -542,7 +648,7 @@ class ModernGLGraphicsDevice(GraphicsDevice):
     ) -> None:
         if not self.ctx:
             raise RuntimeError("Context ModernGL não foi inicializado")
-    
+
         is_src_depth = src_attachment == "depth"
         is_dst_depth = dst_attachment == "depth"
         if is_src_depth != is_dst_depth:
@@ -551,43 +657,67 @@ class ModernGLGraphicsDevice(GraphicsDevice):
             )
 
         tmp_src_fb: Optional[moderngl.Framebuffer] = None
-        if src_target.color_textures or (is_src_depth and src_target.depth_texture):
-            src_tex = self._resolve_attachment_texture(src_target, src_attachment)
-            tmp_src_fb = (
-                self.ctx.framebuffer(depth_attachment=src_tex)
-                if is_src_depth
-                else self.ctx.framebuffer(color_attachments=[src_tex])
-            )
-            src_fb = tmp_src_fb
-            src_w, src_h = src_tex.width, src_tex.height
-        else:
-            src_fb = src_target.framebuffer
-            src_w, src_h = src_target.size
-
         tmp_dst_fb: Optional[moderngl.Framebuffer] = None
-        if dst_target.color_textures or (is_dst_depth and dst_target.depth_texture):
-            dst_tex = self._resolve_attachment_texture(dst_target, dst_attachment)
-            tmp_dst_fb = (
-                self.ctx.framebuffer(depth_attachment=dst_tex)
-                if is_dst_depth
-                else self.ctx.framebuffer(color_attachments=[dst_tex])
-            )
-            dst_fb = tmp_dst_fb
-            dst_w, dst_h = dst_tex.width, dst_tex.height
-        else:
-            dst_fb = dst_target.framebuffer
-            dst_w, dst_h = dst_target.size
-
-        src_fb.viewport = (
-            src_viewport if src_viewport is not None else (0, 0, src_w, src_h)
-        )
-        dst_fb.viewport = (
-            dst_viewport if dst_viewport is not None else (0, 0, dst_w, dst_h)
-        )
 
         try:
+            # Check if targets possess managed texture objects
+            has_src_textures = (
+                bool(src_target.depth_texture)
+                if is_src_depth
+                else bool(getattr(src_target, "color_textures", None))
+            )
+
+            has_dst_textures = (
+                bool(dst_target.depth_texture)
+                if is_dst_depth
+                else bool(getattr(dst_target, "color_textures", None))
+            )
+
+            # 1. Resolve Source Framebuffer
+            if has_src_textures:
+                src_tex = self._resolve_attachment_texture(
+                    src_target, src_attachment
+                )
+                tmp_src_fb = (
+                    self.ctx.framebuffer(depth_attachment=src_tex)
+                    if is_src_depth
+                    else self.ctx.framebuffer(color_attachments=[src_tex])
+                )
+                src_fb = tmp_src_fb
+                src_w, src_h = src_tex.width, src_tex.height
+            else:
+                src_fb = src_target.framebuffer
+                src_w, src_h = src_target.size
+
+            # 2. Resolve Destination Framebuffer
+            if has_dst_textures:
+                dst_tex = self._resolve_attachment_texture(
+                    dst_target, dst_attachment
+                )
+                tmp_dst_fb = (
+                    self.ctx.framebuffer(depth_attachment=dst_tex)
+                    if is_dst_depth
+                    else self.ctx.framebuffer(color_attachments=[dst_tex])
+                )
+                dst_fb = tmp_dst_fb
+                dst_w, dst_h = dst_tex.width, dst_tex.height
+            else:
+                dst_fb = dst_target.framebuffer
+                dst_w, dst_h = dst_target.size
+
+            # 3. Set Viewports
+            src_fb.viewport = (
+                src_viewport if src_viewport is not None else (0, 0, src_w, src_h)
+            )
+            dst_fb.viewport = (
+                dst_viewport if dst_viewport is not None else (0, 0, dst_w, dst_h)
+            )
+
+            # 4. Copy / Blit Framebuffer
             self.ctx.copy_framebuffer(dst=dst_fb, src=src_fb)
+
         finally:
+            # Clean up temporary wrappers
             if tmp_src_fb:
                 tmp_src_fb.release()
             if tmp_dst_fb:

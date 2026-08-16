@@ -2,13 +2,13 @@
 
 in vec2 v_uv;
 
-layout(location = 0) out vec4 out_color;
+layout(location = 0) out vec4 Light_Out;
 
-uniform sampler2D sw_Albedo;
-uniform sampler2D sw_Normals;
-uniform sampler2D sw_Depth;
-uniform sampler2D sw_SSAO;
-uniform sampler2D sw_ShadowMap;
+uniform sampler2D Light_Albedo;
+uniform sampler2D Light_Normals;
+uniform sampler2D Light_Depth;
+uniform sampler2D Light_SSAO;
+uniform sampler2D Light_ShadowMap;
 
 uniform mat4 sw_InvProjection;
 uniform mat4 sw_InvView;
@@ -22,6 +22,21 @@ uniform vec3 sw_LightColor;
 uniform vec3 sw_CameraPosition;
 
 uniform float sw_AmbientStrength;
+
+uniform vec2 sw_ShadowMapSize;
+uniform float sw_LightSize = 8.0;
+
+const int PCSS_SAMPLES = 16;
+const vec2 POISSON_DISK[16] = vec2[](
+    vec2(-0.94201624, -0.39906216), vec2(0.94558609, -0.26889616),
+    vec2(-0.09418410, -0.92938870), vec2(0.34495938,  0.29387760),
+    vec2(-0.91588581,  0.45771432), vec2(-0.81544232, -0.87912464),
+    vec2(-0.38277543,  0.27676845), vec2(0.97484398,  0.75648377),
+    vec2(0.44323325, -0.97511554), vec2(0.53742981, -0.47373420),
+    vec2(-0.26496911, -0.41893023), vec2(0.79197514,  0.19090160),
+    vec2(-0.24188840,  0.99706507), vec2(-0.81409955,  0.91437590),
+    vec2(0.19984126,  0.78641367), vec2(0.14383161, -0.14100790)
+);
 
 vec3 reconstruct_view_position(
     vec2 uv,
@@ -42,55 +57,80 @@ vec3 reconstruct_view_position(
     return view.xyz / view.w;
 }
 
-float shadow_factor(vec3 world_position)
+float find_blocker_depth(vec3 shadow_uvz, float bias, float search_radius)
 {
-    vec4 light_clip =
-        sw_LightProjection *
-        sw_LightView *
-        vec4(world_position, 1.0);
+    float blocker_sum = 0.0;
+    int num_blockers = 0;
 
-    light_clip.xyz /=
-        light_clip.w;
+    for (int i = 0; i < PCSS_SAMPLES; ++i)
+    {
+        vec2 offset = POISSON_DISK[i] * search_radius;
+        float sample_depth = texture(Light_ShadowMap, shadow_uvz.xy + offset).r;
 
-    vec3 shadow_uvz =
-        light_clip.xyz * 0.5 + 0.5;
+        if (sample_depth < shadow_uvz.z - bias)
+        {
+            blocker_sum += sample_depth;
+            num_blockers++;
+        }
+    }
 
-    if (shadow_uvz.x < 0.0 ||
-        shadow_uvz.x > 1.0 ||
-        shadow_uvz.y < 0.0 ||
-        shadow_uvz.y > 1.0)
+    if (num_blockers == 0) 
+        return -1.0;
+
+    return blocker_sum / float(num_blockers);
+}
+
+float shadow_factor(vec3 world_position, vec3 normal, vec3 L)
+{
+    vec4 light_clip = sw_LightProjection * sw_LightView * vec4(world_position, 1.0);
+    light_clip.xyz /= light_clip.w;
+    vec3 shadow_uvz = light_clip.xyz * 0.5 + 0.5;
+
+    if (shadow_uvz.x < 0.0 || shadow_uvz.x > 1.0 ||
+        shadow_uvz.y < 0.0 || shadow_uvz.y > 1.0 ||
+        shadow_uvz.z > 1.0)
     {
         return 1.0;
     }
 
-    if (shadow_uvz.z > 1.0)
-        return 1.0;
+    // Dynamic slope-scale bias (fixes self-shadow acne on steep surfaces)
+    float bias = max(0.003 * (1.0 - dot(normal, L)), 0.0005);
 
-    float shadow_depth =
-        texture(
-            sw_ShadowMap,
-            shadow_uvz.xy
-        ).r;
+    // 1. Search for average blocker depth
+    float search_radius = sw_LightSize / sw_ShadowMapSize.x;
+    float avg_blocker_depth = find_blocker_depth(shadow_uvz, bias, search_radius);
 
-    float bias = 0.002;
+    if (avg_blocker_depth < 0.0)
+        return 1.0; // No occluders found
 
-    return
-        shadow_uvz.z - bias <= shadow_depth
-        ? 1.0
-        : 0.0;
+    // 2. Estimate penumbra size based on distance between blocker and receiver
+    float receiver_depth = shadow_uvz.z;
+    float penumbra = (receiver_depth - avg_blocker_depth) / avg_blocker_depth;
+    float filter_radius = penumbra * sw_LightSize / sw_ShadowMapSize.x;
+
+    // 3. PCF Filtering scaled by penumbra size
+    float shadow_sum = 0.0;
+    for (int i = 0; i < PCSS_SAMPLES; ++i)
+    {
+        vec2 offset = POISSON_DISK[i] * filter_radius;
+        float sample_depth = texture(Light_ShadowMap, shadow_uvz.xy + offset).r;
+        shadow_sum += (receiver_depth - bias <= sample_depth) ? 1.0 : 0.0;
+    }
+
+    return shadow_sum / float(PCSS_SAMPLES);
 }
 
 void main()
 {
     float depth =
-        texture(sw_Depth, v_uv).r;
+        texture(Light_Depth, v_uv).r;
 
     /*
      * Nothing was rendered here.
      */
     if (depth >= 1.0)
     {
-        out_color =
+        Light_Out =
             vec4(0.0);
 
         return;
@@ -98,13 +138,13 @@ void main()
 
     vec3 albedo =
         texture(
-            sw_Albedo,
+            Light_Albedo,
             v_uv
         ).rgb;
 
     vec3 normal =
         texture(
-            sw_Normals,
+            Light_Normals,
             v_uv
         ).rgb;
 
@@ -115,7 +155,7 @@ void main()
 
     float ao =
         texture(
-            sw_SSAO,
+            Light_SSAO,
             v_uv
         ).r;
 
@@ -148,7 +188,7 @@ void main()
 
     float shadow =
         shadow_factor(
-            world_position
+            world_position, normal, L
         );
 
     vec3 ambient =
@@ -166,6 +206,6 @@ void main()
         ambient +
         diffuse;
 
-    out_color =
+    Light_Out =
         vec4(color, 1.0);
 }

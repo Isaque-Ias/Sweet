@@ -1,6 +1,34 @@
 from sweet.graphics.upload import GPUShader
 from typing import Optional, NamedTuple
+from ....resources.assets.importer import ImportManager
+from ...upload import UploadManager
+from pathlib import Path
+from collections import defaultdict, deque
+from enum import Enum, auto
 
+class RenderDomain(Enum):
+    SCREEN = auto()
+    SCENE = auto()
+    LIGHT = auto()
+    CAMERA = auto()
+    PROBE = auto()
+
+class Graph:
+    graph: "RenderGraph"
+    @classmethod
+    def _file_to_node(cls, vertex: str | Path, fragment: str | Path):
+        shader_prog = ImportManager.load_shaders(vertex, fragment)
+        gpu_shader = UploadManager.upload_shaders(shader_prog)
+        return gpu_shader
+
+    @classmethod
+    def build(cls):
+        pass
+
+    @classmethod
+    def initialize(cls):
+        cls.graph.initialize()
+        
 class ResourceDesc(NamedTuple):
     name: str
     size_bytes: int
@@ -21,7 +49,7 @@ class ResourceLifetime:
         return not (self.last_pass < other.first_pass or self.first_pass > other.last_pass)
 
 class RenderShader:
-    def __init__(self, name: str, program: Optional[GPUShader] = None):
+    def __init__(self, name: str, program: Optional[GPUShader] = None, domain: RenderDomain = RenderDomain.SCENE):
         self.name: str = name
         self.program: Optional[GPUShader] = program
         self.inputs: set[str] = set()
@@ -29,6 +57,7 @@ class RenderShader:
         self.dependencies: dict[str, tuple[str, "RenderShader"]] = {}
         self._redirect: dict[str, tuple[str, "RenderShader"]] = {}
         self.is_culled: bool = True
+        self.domain = domain
 
     def add_input(self, resource_name: str) -> "RenderShader":
         self.inputs.add(resource_name)
@@ -39,18 +68,17 @@ class RenderShader:
         return self
 
     def connect_input(
-        self, input_res: str, producer_shader: "RenderShader", producer_output_res: str
+        self, producer_output_res: str, producer_shader: "RenderShader", input_res: str
     ) -> None:
         self.inputs.add(input_res)
         producer_shader.outputs.add(producer_output_res)
-        self.dependencies[input_res] = (producer_output_res, producer_shader)
+        self.dependencies[producer_output_res] = (input_res, producer_shader)
 
     def resolve_redirections(self) -> None:
         self._redirect.clear()
         for input_res, (producer_attr, producer_shader) in self.dependencies.items():
             if not producer_shader.is_culled:
                 self._redirect[input_res] = (producer_attr, producer_shader)
-
 
 class MemoryPlanner:
     @staticmethod
@@ -105,6 +133,42 @@ class RenderGraph:
         self.lifetimes: dict[str, ResourceLifetime] = {}
         self.total_transient_heap_size: int = 0
 
+    def topological_sort(self, passes: Optional[list[RenderShader]] = None) -> list[RenderShader]:
+        target_passes = passes if passes is not None else (self.active_passes or self.shaders)
+        pass_set = set(target_passes)
+
+        resource_producers: dict[str, RenderShader] = {
+            res: shader for shader in pass_set for res in shader.outputs
+        }
+
+        in_degree: dict[RenderShader, int] = {shader: 0 for shader in pass_set}
+        adjacency: dict[RenderShader, set[RenderShader]] = defaultdict(set)
+
+        for consumer in pass_set:
+            for input_res in consumer.inputs:
+                producer = resource_producers.get(input_res)
+                if producer and producer in pass_set and producer != consumer:
+                    if consumer not in adjacency[producer]:
+                        adjacency[producer].add(consumer)
+                        in_degree[consumer] += 1
+
+        queue = deque([shader for shader in pass_set if in_degree[shader] == 0])
+        sorted_passes: list[RenderShader] = []
+
+        while queue:
+            node = queue.popleft()
+            sorted_passes.append(node)
+
+            for neighbor in adjacency[node]:
+                in_degree[neighbor] -= 1
+                if in_degree[neighbor] == 0:
+                    queue.append(neighbor)
+
+        if len(sorted_passes) != len(pass_set):
+            raise ValueError("Ciclo de dependência detectado em RenderGraph")
+
+        return sorted_passes
+
     def register_resource(self, name: str, size_bytes: int = 0, is_imported: bool = False) -> None:
         self.resource_descriptors[name] = ResourceDesc(name, size_bytes, is_imported)
 
@@ -149,7 +213,7 @@ class RenderGraph:
                     visited_resources.add(input_res)
                     resources_to_process.append(input_res)
 
-        self.active_passes.reverse()
+        self.active_passes = self.topological_sort(self.active_passes)
 
         for shader in self.active_passes:
             shader.resolve_redirections()

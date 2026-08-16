@@ -10,7 +10,7 @@ from pygltflib import OcclusionTextureInfo as GLBOcclusionTextureInfo
 from pygltflib import NormalMaterialTexture as GLBNormalMaterialTexture
 from ..common import TRS
 from ...core.linalg.vector import Vec3
-from ...core.linalg.rotation import Rotation, RotationModel
+from ...core.linalg.rotation import QuaternionAngle
 import math
 from typing import cast, Callable, Any, Optional, Sequence
 from .import_data import *
@@ -243,7 +243,7 @@ class ImportManager:
         if m is None or len(m) != 16:
             trs = TRS(
                 position=Vec3.from_iter(node.translation or [0, 0, 0]),
-                rotation=Rotation(node.rotation or [0, 0, 0], RotationModel.VECTOR),
+                rotation=QuaternionAngle(),
                 scale=Vec3.from_iter(node.scale or [1, 1, 1]),
             )
 
@@ -295,7 +295,7 @@ class ImportManager:
 
         trs = TRS(
             position=Vec3(tx, ty, tz),
-            rotation=Rotation((qx, qy, qz, qw), RotationModel.QUATERNION),
+            rotation=QuaternionAngle(qx, qy, qz, qw),
             scale=Vec3(sx, sy, sz)
         )
         return trs
@@ -752,7 +752,7 @@ class ImportManager:
         solved_path = system.solve_path(path)
         file_format = solved_path.suffix
 
-        if not file_format in cls._model_formats:
+        if not file_format in cls._texture_formats:
             system.warn(f"Não há suporte para formato fornecido: {file_format} em {solved_path}")
             solved_path = cls.get_model_fallback()
             file_format = solved_path.suffix

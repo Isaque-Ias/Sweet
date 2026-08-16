@@ -52,6 +52,9 @@ class GlfwKeyMapper(GenericMapper):
             self.base_keys.Y: Key.Y,
             self.base_keys.Z: Key.Z,
             self.base_keys.SPACE: Key.SPACE,
+            self.base_keys.LEFT_SHIFT: Key.LEFT_SHIFT,
+            self.base_keys.RIGHT_SHIFT: Key.RIGHT_SHIFT,
+            self.base_keys.LEFT_CTRL: Key.LEFT_CTRL,
             self.base_keys.ESCAPE: Key.ESCAPE,
             self.base_keys.CAPS_LOCK: Key.CAPS_LOCK,
         }
