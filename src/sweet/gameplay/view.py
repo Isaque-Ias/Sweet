@@ -39,11 +39,11 @@ class View:
     def set_viewport(self, value: tuple[int, int, int, int]):
         self._viewport = value
 
-    def get_target(self) -> tuple[Optional[RenderTarget], Optional[DisplaySurface]]:
-        return self._target, self._surface
+    def get_target(self) -> tuple[RenderTarget, Optional[DisplaySurface]]:
+        return self._target, self._surface # type: ignore
 
-    def get_scene(self):
-        return self._scene
+    def get_scene(self) -> Scene:
+        return self._scene # type: ignore
 
     def set_target(self, target: RenderTarget | DisplaySurface):
         if isinstance(target, DisplaySurface):

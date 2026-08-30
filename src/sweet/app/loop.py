@@ -1,5 +1,6 @@
 from moderngl_window.timers.clock import Timer
 import glfw
+from ..gameplay.view import View
 from sweet.gameplay.view import ViewManager
 from sweet.plataform.display.manager import DisplayManager
 from sweet.gameplay.entity import Entity
@@ -91,14 +92,16 @@ def _update(dt: float):
 
 def render(alpha: float):
     active_views = ViewManager.get_current_views()
+    view_pipeline: list[View] = []
     for view in active_views:
         _, win = view.get_target()
         
         if win and hasattr(win, 'is_active') and not win.is_active():
             continue
-
-        PipelineManager.process(view)
+        view_pipeline.append(view)
         view.clear_demand()
+
+    PipelineManager.process_views(view_pipeline)
 
 def _cleanup():
     for display in DisplayManager.query_displays():

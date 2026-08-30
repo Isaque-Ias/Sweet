@@ -24,6 +24,7 @@ class Engine:
             cls._gl_dummy_context()
             cls._window = display.window.moderngl.GLWindow
 
+        sweet.gameplay.skybox.graphics_device = cls.gfx_device
         sweet.gameplay.scene.graphics_device = cls.gfx_device
         sweet.gameplay.assets.Assets.initialize(graphics_device=cls.gfx_device)
         sweet.graphics.upload.UploadManager.initialize(graphics_device=cls.gfx_device)

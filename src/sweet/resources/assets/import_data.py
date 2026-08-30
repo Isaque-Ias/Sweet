@@ -146,6 +146,7 @@ class SceneData:
 class ShaderData:
     vertex: str
     fragment: str
+    geometry: str | None
 
 @dataclass
 class ComputeData:

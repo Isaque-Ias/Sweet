@@ -3,6 +3,14 @@ from enum import Enum, auto
 from dataclasses import dataclass
 from typing import Any, Optional, Union
 
+class CubemapFace(Enum):
+    MINUS_X = auto()
+    PLUS_X = auto()
+    MINUS_Y = auto()
+    PLUS_Y = auto()
+    MINUS_Z = auto()
+    PLUS_Z = auto()
+
 @dataclass
 class Attribute:
     name: str
@@ -38,6 +46,19 @@ class Introspection:
 class Texture2D(ABC):
     @abstractmethod
     def upload_pixels(self, data: Any, width: int, height: int):
+        pass
+
+    @abstractmethod
+    def release(self):
+        pass
+
+class Cubemap(ABC):
+    @abstractmethod
+    def set_filters(*filters: Any):
+        pass
+
+    @abstractmethod
+    def get_target(self) -> Any:
         pass
 
     @abstractmethod
@@ -151,6 +172,7 @@ class RenderPipelineDescriptor:
     vertex_layout: VertexLayout
     primitive_topology: str = "triangles" # triangles, lines, points
     cull_mode: str = "back"
+    depth_compare_op: str = "less_equal"
     depth_test_enable: bool = True
     depth_write_enable: bool = True
     blend_enabled: bool = False
@@ -230,11 +252,11 @@ class GraphicsDevice(ABC):
         pass
 
     @abstractmethod
-    def create_mrt_framebuffer(self, width: int, height: int, color_formats: list[int], has_depth: bool = True) -> RenderTarget:
+    def create_mrt_framebuffer(self, width: int, height: int, color_formats: list[int] | list[Texture2D], has_depth: bool = True) -> RenderTarget:
         pass
 
     @abstractmethod
-    def create_framebuffer(self, width: int, height: int) -> RenderTarget:
+    def create_framebuffer(self, width: int, height: int, texture: Any = None) -> RenderTarget:
         pass
     
     @abstractmethod
@@ -255,6 +277,10 @@ class GraphicsDevice(ABC):
 
     @abstractmethod
     def create_texture2d(self, width: int, height: int, format: int) -> Texture2D:
+        pass
+
+    @abstractmethod
+    def create_cubemap(self, size: int, components: int) -> Cubemap:
         pass
 
     @abstractmethod

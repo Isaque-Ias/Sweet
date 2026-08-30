@@ -20,6 +20,7 @@ requires-python = ">=3.10"
 dependencies = [
     # Setup
     "setuptools>=61.0.0",
+    "colorama>=0.4.6",
 
     # Rendering
     "moderngl>=5.12.0",

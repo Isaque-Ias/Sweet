@@ -3,6 +3,7 @@ from typing import Sequence, Callable, Optional
 from ..resources.common import TRS
 from .entity import Entity
 from .visual import Visual
+from .skybox import SkyBox
 from .light import Light
 from sweet.plataform.hal.manager import ResourceType
 import numpy as np
@@ -159,11 +160,23 @@ class Scene:
         self._name = name
         self._entities: list[Entity] = []
         self._active = False
+        self._skybox: Optional[SkyBox] = None
 
         if entities is not None:
             self.add_entity(entities)
 
         SceneManager.add_scene(self)
+
+    @property
+    def skybox(self):
+        return self._skybox
+
+    @skybox.setter
+    def skybox(self, skybox: SkyBox):
+        self._skybox = skybox
+        skybox.scene = self
+        for view in skybox.views:
+            view.set_scene(self)
 
     def get_lights(self):
         lights: list[Light] = []

@@ -12,12 +12,14 @@ class RenderDomain(Enum):
     LIGHT = auto()
     CAMERA = auto()
     PROBE = auto()
+    CUBEMAP = auto()
 
 class Graph:
     graph: "RenderGraph"
+    name: str = "Nameless"
     @classmethod
-    def _file_to_node(cls, vertex: str | Path, fragment: str | Path):
-        shader_prog = ImportManager.load_shaders(vertex, fragment)
+    def _file_to_node(cls, vertex: str | Path, fragment: str | Path, geometry: Optional[str | Path]=None):
+        shader_prog = ImportManager.load_shaders(vertex, fragment, geometry)
         gpu_shader = UploadManager.upload_shaders(shader_prog)
         return gpu_shader
 

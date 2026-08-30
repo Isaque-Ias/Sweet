@@ -6,6 +6,7 @@ _BASE = Path(__file__).parent
 _PASSES = _BASE.parent.parent / "passes"
 
 class Deffered(Graph):
+    name = "Deffered"
     @classmethod
     def build(cls):
         cls.graph = RenderGraph()
@@ -33,7 +34,7 @@ class Deffered(Graph):
         shadow_pass = RenderShader("ShadowPass", cls._file_to_node(
             _PASSES / "shadow" / "shadow.vert",
             _PASSES / "shadow" / "shadow.frag",
-        ), RenderDomain.SCENE)
+        ), RenderDomain.LIGHT)
 
         shadow_pass.add_input("Mesh_Positions")
         shadow_pass.add_input("Mesh_Normals")
@@ -54,7 +55,7 @@ class Deffered(Graph):
         gbuffer_pass.add_output("GBuffer_Normals")
 
         ssao_pass = RenderShader("SSAOPass", cls._file_to_node(
-            _PASSES / "ssao" / "ssao.vert",
+            _PASSES / "fullscreen.vert",
             _PASSES / "ssao" / "ssao.frag",
         ), RenderDomain.SCREEN)
 
@@ -71,6 +72,56 @@ class Deffered(Graph):
         )
 
         ssao_pass.add_output("SSAO_Out")
+
+        ssao_blur_x_pass = RenderShader("SSAOBlurXPass", cls._file_to_node(
+            _PASSES / "fullscreen.vert",
+            _PASSES / "ssao_blur" / "horizontal.frag",
+        ), RenderDomain.SCREEN)
+
+        ssao_blur_x_pass.connect_input(
+            "SSAO_Input",
+            ssao_pass,
+            "SSAO_Out",
+        )
+
+        ssao_blur_x_pass.connect_input(
+            "SSAO_Normals",
+            gbuffer_pass,
+            "GBuffer_Normals",
+        )
+
+        ssao_blur_x_pass.connect_input(
+            "SSAO_Depth",
+            gbuffer_pass,
+            "depth_GBuffer",
+        )
+        
+        ssao_blur_x_pass.add_output("AOX_Out")
+
+        ssao_blur_y_pass = RenderShader("SSAOBlurYPass", cls._file_to_node(
+            _PASSES / "fullscreen.vert",
+            _PASSES / "ssao_blur" / "vertical.frag",
+        ), RenderDomain.SCREEN)
+
+        ssao_blur_y_pass.connect_input(
+            "SSAO_Input",
+            ssao_blur_x_pass,
+            "AOX_Out",
+        )
+
+        ssao_blur_y_pass.connect_input(
+            "SSAO_Normals",
+            gbuffer_pass,
+            "GBuffer_Normals",
+        )
+
+        ssao_blur_y_pass.connect_input(
+            "SSAO_Depth",
+            gbuffer_pass,
+            "depth_GBuffer",
+        )
+        
+        ssao_blur_y_pass.add_output("AOY_Out")
 
         lighting_pass = RenderShader("LightingPass", cls._file_to_node(
             _PASSES / "lighting" / "lighting.vert",
@@ -97,8 +148,9 @@ class Deffered(Graph):
 
         lighting_pass.connect_input(
             "Light_SSAO",
-            ssao_pass,
-            "SSAO_Out",
+            # ssao_pass, "SSAO_Out"
+            ssao_blur_y_pass,
+            "AOY_Out",
         )
 
         lighting_pass.connect_input(
@@ -108,6 +160,8 @@ class Deffered(Graph):
         )
 
         lighting_pass.add_output("Light_Out")
+
+        # present
 
         present_pass = RenderShader("PresentPass", cls._file_to_node(
             _PASSES / "present" / "present.vert",
@@ -126,6 +180,8 @@ class Deffered(Graph):
             shadow_pass,
             gbuffer_pass,
             ssao_pass,
+            ssao_blur_x_pass,
+            ssao_blur_y_pass,
             lighting_pass,
             present_pass,
         ]:

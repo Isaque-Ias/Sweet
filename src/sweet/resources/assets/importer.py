@@ -63,17 +63,25 @@ class ImportManager:
         return shader_data
 
     @staticmethod
-    def load_shaders(path_vertex: str | Path, path_fragment: str | Path) -> ShaderData:
+    def load_shaders(path_vertex: str | Path, path_fragment: str | Path, path_geometry: Optional[str | Path]=None) -> ShaderData:
         absolute_vertex = system.solve_path(path_vertex)
         absolute_fragment = system.solve_path(path_fragment)
+        
         with open(absolute_vertex, "r") as file:
             VERTEX_SHADER = file.read()
         with open(absolute_fragment, "r") as file:
             FRAGMENT_SHADER = file.read()
 
+        geometry_shader = None
+        if not path_geometry is None:
+            absolute_geometry = system.solve_path(path_geometry)
+            with open(absolute_geometry, "r") as file:
+                geometry_shader = file.read()
+
         shader_data = ShaderData(
             vertex=VERTEX_SHADER,
-            fragment=FRAGMENT_SHADER
+            fragment=FRAGMENT_SHADER,
+            geometry=geometry_shader
         )
         return shader_data
 

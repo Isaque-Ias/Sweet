@@ -12,17 +12,17 @@ class Light:
         self.intensity = 1.0
         self.direction = direction.normalize()
         self.position = Vec3(0, 0, 0)
-        self.fov = 120
+        self.fov = 90
 
     def get_view(self):
         dir_glm = glm.vec3(self.direction.x, self.direction.y, self.direction.z)
         
         if abs(dir_glm.y) > 0.9999:
-            up_referencia = glm.vec3(0, 0, 1)
+            up_reference = glm.vec3(0, 0, 1)
         else:
-            up_referencia = glm.vec3(0, 1, 0)
+            up_reference = glm.vec3(0, 1, 0)
 
-        orientacao = glm.quatLookAt(dir_glm, up_referencia)
+        orientacao = glm.quatLookAt(dir_glm, up_reference) # type: ignore
 
         up = orientacao * glm.vec3(0, 1, 0)
 
@@ -30,7 +30,7 @@ class Light:
                           self.position.y + self.direction.y,
                           self.position.z + self.direction.z)
 
-        return glm.lookAt(self.position.unp(), target, up)
+        return glm.lookAt(self.position.unp(), target, up) # type: ignore
 
     def get_projection(self):
         if self.type == LightType.POINT:
