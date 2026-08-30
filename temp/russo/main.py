@@ -47,7 +47,7 @@ for asset in assets3[0].meshes.values():
 class Player(sw.GameModel):
     def __init__(self, win: sw.WindowSurface):
         self.camera = sw.Camera()
-        self.camera.position = Vec3(0, 0, 3)
+        self.camera.position = Vec3(0, 0, 0)
         
         self.render = sw.View(sw.UpdatePolicy.EVERY_FRAME)
         self.render.set_target(win)
@@ -88,10 +88,12 @@ class Player(sw.GameModel):
         # sw.graphics.render.process.PipelineManager.set_uniform_value("sw_Radius", struct.pack("1f", self.k))
 
         if self.win.input.is_key_held(sw.Key.F):
-            self.k += 0.001
+            self.k += 0.01
 
         if self.win.input.is_key_held(sw.Key.G):
-            self.k -= 0.001 
+            self.k -= 0.01
+
+        sw.graphics.render.process.PipelineManager.day_time = self.k
 
         if self.win.input.is_key_held(sw.Key.LEFT_SHIFT):
             self.node.position = Vec3(

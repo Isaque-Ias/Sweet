@@ -13,7 +13,7 @@ class SkyBox(Graph):
 
         sky_pass = RenderShader("SkyPass", cls._file_to_node(
             _PASSES / "cubemap.vert",
-            _PASSES / "sky" / "mishita.frag",
+            _PASSES / "sky" / "nishita.frag",
             geometry=_PASSES / "cubemap.geom",
         ), RenderDomain.CUBEMAP)
 

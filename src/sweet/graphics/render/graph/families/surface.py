@@ -161,6 +161,21 @@ class Deffered(Graph):
 
         lighting_pass.add_output("Light_Out")
 
+        # sky
+
+        sky_pass = RenderShader("SkyPass", cls._file_to_node(
+            _PASSES / "fullscreen.vert",
+            _PASSES / "sky" / "nishita.frag",
+        ), RenderDomain.SCREEN)
+
+        sky_pass.connect_input(
+            "Sky_Light",
+            lighting_pass,
+            "Light_Out",
+        )
+
+        sky_pass.add_output("FragColor")
+
         # present
 
         present_pass = RenderShader("PresentPass", cls._file_to_node(
@@ -170,8 +185,8 @@ class Deffered(Graph):
 
         present_pass.connect_input(
             "Present_Light",
-            lighting_pass,
-            "Light_Out",
+            sky_pass,
+            "FragColor",
         )
 
         present_pass.add_output("Backbuffer")
@@ -183,6 +198,7 @@ class Deffered(Graph):
             ssao_blur_x_pass,
             ssao_blur_y_pass,
             lighting_pass,
+            sky_pass,
             present_pass,
         ]:
             cls.graph.add_shader(render_pass)

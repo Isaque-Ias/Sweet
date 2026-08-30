@@ -3,6 +3,7 @@ from sweet.plataform.display.window.window import WindowSurface
 from ..upload import UploadManager, GPUMeshSource
 from sweet.resources.assets.importer import ImportManager
 from ...plataform.hal.manager import *
+import math
 from .visibility.frustum import FrustumCulling
 from .graph.families.surface import Deffered
 from .graph.families.skybox import SkyBox
@@ -59,6 +60,81 @@ class ViewPreparedData:
     max_indices_in_batch: int
     pass_targets: dict[str, RenderTarget] = field(default_factory=dict) # type: ignore
 
+import numpy as np
+
+# Constants matching your shader
+EARTH_RADIUS = 6371000.0
+ATM_RADIUS   = 6471000.0
+HR           = 8000.0
+HM           = 1200.0
+
+BETA_R = np.array([5.8e-6, 1.35e-5, 3.31e-5], dtype=np.float32)
+BETA_M = np.array([4.0e-6, 4.0e-6, 4.0e-6], dtype=np.float32)
+
+def cpu_ray_sphere_intersect(ro, rd, radius):
+    b = np.dot(ro, rd)
+    c = np.dot(ro, ro) - radius * radius
+    d = b * b - c
+    if d < 0.0:
+        return np.array([-1.0, -1.0], dtype=np.float32)
+    sqrt_d = np.sqrt(d)
+    return np.array([-b - sqrt_d, -b + sqrt_d], dtype=np.float32)
+
+def calculate_sun_and_ambient(camera_pos, sun_direction, base_sun_intensity):
+    """
+    Computes dynamic sun light color and ambient light color based on Nishita scattering.
+    
+    Parameters:
+    - camera_pos: numpy array [x, y, z] of camera world position
+    - sun_direction: numpy array [x, y, z] normalized direction pointing TOWARDS the sun
+    - base_sun_intensity: numpy array [r, g, b] or float for raw sun energy
+    
+    Returns:
+    - (sun_color, ambient_color) as numpy arrays
+    """
+    ray_origin = camera_pos + np.array([0.0, EARTH_RADIUS, 0.0], dtype=np.float32)
+
+    # 1. Calculate Sun Color (Direct Light with Atmospheric Attenuation)
+    sun_elevation = sun_direction[1] # Y component
+    if sun_elevation < -0.1:
+        # Sun is below the horizon
+        return np.array([0.0, 0.0, 0.0], dtype=np.float32), np.array([0.02, 0.02, 0.02], dtype=np.float32)
+
+    # Trace ray from camera/surface to top of atmosphere along sun direction
+    hit_sun_atm = cpu_ray_sphere_intersect(ray_origin, sun_direction, ATM_RADIUS)
+    light_step_size = hit_sun_atm[1] / 8.0
+    
+    optical_depth_r = 0.0
+    optical_depth_m = 0.0
+
+    for j in range(8):
+        light_sample_pos = ray_origin + sun_direction * ((float(j) + 0.5) * light_step_size)
+        light_height = np.linalg.norm(light_sample_pos) - EARTH_RADIUS
+        if light_height < 0.0:
+            light_height = 0.0
+
+        optical_depth_r += np.exp(-light_height / HR) * light_step_size
+        optical_depth_m += np.exp(-light_height / HM) * light_step_size
+
+    # Beer's Law for sun attenuation through the atmosphere
+    tau = BETA_R * optical_depth_r + BETA_M * 1.1 * optical_depth_m
+    sun_attenuation = np.exp(-tau)
+    
+    sun_color = base_sun_intensity * sun_attenuation
+
+    # 2. Calculate Ambient Color (Approximated via Zenith / Overhead Sky Direction)
+    zenith_dir = np.array([0.0, 1.0, 0.0], dtype=np.float32)
+    cos_theta = np.dot(zenith_dir, sun_direction)
+    phase_r = (3.0 / (16.0 * np.pi)) * (1.0 + cos_theta * cos_theta)
+    
+    # Approximate overhead sky scattering luminance
+    zenith_sky = base_sun_intensity * (BETA_R * phase_r * 0.0005)
+    
+    # Combine zenith sky with a minimum ambient floor
+    ambient_color = np.maximum(zenith_sky, np.array([0.03, 0.03, 0.03], dtype=np.float32)) + (sun_color * 0.05)
+
+    return sun_color, ambient_color
+
 class PipelineManager:
     _initialized = False
     gfx_device: GraphicsDevice
@@ -86,9 +162,6 @@ class PipelineManager:
     def _resolve_pass_target(
         cls, render_pass: RenderPass, width: int, height: int, output_type: str = "2d"
     ) -> RenderTarget:
-        """Retorna (ou cria e cacheia) o RenderTarget de um pass para um
-        tamanho específico. Suporta tanto passes que produzem imagens 2D
-        comuns (MRT framebuffer) quanto passes que produzem uma cubemap."""
         key = (width, height)
         cached = render_pass.target_cache.get(key)
         if cached is not None:
@@ -279,6 +352,8 @@ class PipelineManager:
 
             render_passes.append(render_pass)
 
+            # print(inputs, render_pass.name)
+
         cls._graphs[graph.name] = render_passes
 
     @classmethod
@@ -300,12 +375,17 @@ class PipelineManager:
             "sw_RenderObjects": cls.packet_buffer,
         }
 
+        cam_pos = np.array([0.0, 0.0, 0.0], dtype=np.float32)
+        sun_dir = np.normalize([0, 1, 0]) if hasattr(np, 'normalize') else np.array([0.0, 0.7, 0.7]) / np.linalg.norm([0.0, 0.7, 0.7])
+        sun_intensity = np.array([20.0, 20.0, 20.0], dtype=np.float32)
+        sun_color, ambient_color = calculate_sun_and_ambient(cam_pos, sun_dir, sun_intensity)
+
         cls._uniform_batch: dict[str, Any] = {
             "sw_View": bytearray(),
             "sw_Projection": bytearray(),
             "sw_NearPlane": bytearray(),
             "sw_FarPlane": bytearray(),
-            "sw_LightColor": struct.pack('3f', 1, 1, 1),
+            "sw_LightColor": struct.pack('3f', *sun_color),
             "sw_ShadowMapSize": struct.pack('2f', *cls.light_map_size),
             "sw_Radius": struct.pack('1f', .5),
             "sw_Bias": struct.pack('1f', 0.025),
@@ -314,8 +394,8 @@ class PipelineManager:
             "sw_BlurRadius": struct.pack('1i', 4),
             "sw_DepthSharpness": struct.pack('1f', 8.0),
             "sw_NormalSharpness": struct.pack('1f', 8.0),
-            "sw_AmbientStrength": struct.pack('f', 0.3),
-            "sw_SunIntensity": struct.pack('3f', 100, 100, 100),
+            "sw_AmbientColor": struct.pack('3f', 0.3, 0.3, 0.3),
+            "sw_SunIntensity": struct.pack('3f', *sun_intensity),
             "sw_SunDirection": struct.pack('3f', 0, 1, 0),
         }
 
@@ -333,7 +413,9 @@ class PipelineManager:
         cls._imported_resources["SSAO_Noise"] = texture
 
         cls._load_graph(Deffered())
-        cls._load_graph(SkyBox())
+
+        cls.day_time = 0
+        # cls._load_graph(SkyBox())
 
     @staticmethod
     def floats_to_mat4(data: np.ndarray) -> glm.mat4:
@@ -503,6 +585,15 @@ class PipelineManager:
 
                 cls.set_uniform_value("sw_CameraPosition", struct.pack('3f', 0, 0, 0)) # type: ignore
 
+                cam_pos = np.array([0.0, 0.0, 0.0], dtype=np.float32)
+                sun_dir = np.array([0, math.cos(cls.day_time), math.sin(cls.day_time)])# if hasattr(np, 'normalize') else np.array([0.0, 0.7, 0.7]) / np.linalg.norm([0.0, 0.7, 0.7])
+                sun_intensity = np.array([20, 20, 20], dtype=np.float32)
+                sun_color, ambient_color = calculate_sun_and_ambient(cam_pos, sun_dir, sun_intensity)
+
+                cls.set_uniform_value("sw_SunDirection", struct.pack('3f', *sun_dir))
+                cls.set_uniform_value("sw_LightColor", struct.pack('3f', *sun_color))
+                cls.set_uniform_value("sw_AmbientColor", struct.pack('3f', *ambient_color))
+
                 if render_pass.domain == RenderDomain.LIGHT:
                     pass_viewport = (0, 0, cls.light_map_size[0], cls.light_map_size[1])
                 else:
@@ -539,8 +630,8 @@ class PipelineManager:
                 # if not hasattr(cls, "k"):
                 #     cls.k = 0
                 # if cls.k > 10:
-                #     if render_pass.name == "ShadowPass":
-                #         cmd.save_image(Path(__file__).parent / "targets" / render_pass.name)
+                #     # if render_pass.name == "ShadowPass":
+                # cmd.save_image(Path(__file__).parent / "targets" / render_pass.name)
                 #     print("saved")
                 #     cls.k = 0
                 # cls.k += .1

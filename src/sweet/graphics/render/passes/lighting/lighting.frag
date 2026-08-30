@@ -21,7 +21,8 @@ uniform vec3 sw_LightColor;
 
 uniform vec3 sw_CameraPosition;
 
-uniform float sw_AmbientStrength;
+// Changed from float strength to vec3 color
+uniform vec3 sw_AmbientColor;
 
 uniform vec2 sw_ShadowMapSize;
 uniform float sw_LightSize = 8.0;
@@ -93,22 +94,18 @@ float shadow_factor(vec3 world_position, vec3 normal, vec3 L)
         return 1.0;
     }
 
-    // Dynamic slope-scale bias (fixes self-shadow acne on steep surfaces)
     float bias = max(0.003 * (1.0 - dot(normal, L)), 0.0005);
 
-    // 1. Search for average blocker depth
     float search_radius = sw_LightSize / sw_ShadowMapSize.x;
     float avg_blocker_depth = find_blocker_depth(shadow_uvz, bias, search_radius);
 
     if (avg_blocker_depth < 0.0)
-        return 1.0; // No occluders found
+        return 1.0; 
 
-    // 2. Estimate penumbra size based on distance between blocker and receiver
     float receiver_depth = shadow_uvz.z;
     float penumbra = (receiver_depth - avg_blocker_depth) / avg_blocker_depth;
     float filter_radius = penumbra * sw_LightSize / sw_ShadowMapSize.x;
 
-    // 3. PCF Filtering scaled by penumbra size
     float shadow_sum = 0.0;
     for (int i = 0; i < PCSS_SAMPLES; ++i)
     {
@@ -125,9 +122,6 @@ void main()
     float depth =
         texture(Light_Depth, v_uv).r;
 
-    /*
-     * Nothing was rendered here.
-     */
     if (depth >= 1.0)
     {
         Light_Out =
@@ -173,10 +167,6 @@ void main()
         world_position4.xyz /
         world_position4.w;
 
-    /*
-     * Light direction points FROM the surface
-     * toward the light.
-     */
     vec3 L =
         normalize(-sw_LightDirection);
 
@@ -191,9 +181,10 @@ void main()
             world_position, normal, L
         );
 
+    // Using the new ambient color uniform instead of strength scalar
     vec3 ambient =
         albedo *
-        sw_AmbientStrength *
+        sw_AmbientColor *
         ao;
 
     vec3 diffuse =

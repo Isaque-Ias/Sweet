@@ -1,8 +1,13 @@
 #version 330 core
-out vec4 FragColor;
-in vec3 v_cube_uv;
 
-uniform vec3 sw_CameraPosition;
+out vec4 FragColor;
+in vec2 v_uv;
+
+// Uniforms
+uniform sampler2D Sky_Light;        // Texture from the previous lighting pass
+uniform mat4 sw_InvView;            // Inverse View Matrix (Camera-to-World)
+uniform mat4 sw_InvProjection;      // Inverse Projection Matrix (Clip-to-View)
+
 uniform vec3 sw_SunDirection;
 uniform vec3 sw_SunIntensity;
 
@@ -27,8 +32,24 @@ float densityRayleigh(float h) { return exp(-h / HR); }
 float densityMie(float h)      { return exp(-h / HM); }
 
 void main() {
-    vec3 rayDir = normalize(v_cube_uv);
-    vec3 rayOrigin = sw_CameraPosition + EARTH_RADIUS;
+    vec4 sceneColor = texture(Sky_Light, v_uv);
+
+    // If the pixel contains geometry from the lighting pass, keep it
+    if (sceneColor.a >= 0.1) {
+        FragColor = sceneColor;
+        return;
+    }
+
+    // Otherwise, render the Nishita sky on the background/transparent pixels
+    vec3 sw_CameraPosition = sw_InvView[3].xyz;
+
+    // Reconstruct world-space ray direction
+    vec4 ndc = vec4(v_uv * 2.0 - 1.0, 1.0, 1.0);
+    vec4 viewRay = sw_InvProjection * ndc;
+    viewRay = viewRay / viewRay.w;
+    vec3 rayDir = normalize(mat3(sw_InvView) * viewRay.xyz);
+
+    vec3 rayOrigin = sw_CameraPosition + vec3(0.0, EARTH_RADIUS + 1000, 0.0);
 
     vec2 hitAtm = raySphereIntersect(rayOrigin, rayDir, ATM_RADIUS);
     if (hitAtm.y < 0.0) {
@@ -90,6 +111,6 @@ void main() {
 
     vec3 radiance = sw_SunIntensity * (sumR * BETA_R * phaseR + sumM * BETA_M * phaseM);
 
-    // Keep output linear for floating-point cubemap baking
+    // Output the calculated atmospheric scattering to the background
     FragColor = vec4(radiance, 1.0);
 }
