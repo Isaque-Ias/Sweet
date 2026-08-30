@@ -53,8 +53,6 @@ def save_cubemap_to_disk(cubemap_tex: moderngl.TextureCube, prefix: str = "cubem
         img.save(f"{prefix}_{i}_{name}.png")
         print(f"Saved {prefix}_{i}_{name}.png")
 
-from pathlib import Path
-
 class SkyBox:
     def __init__(self, type: SkyBoxType):
         self.type = type

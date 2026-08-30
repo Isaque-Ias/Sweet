@@ -86,9 +86,6 @@ class PipelineManager:
     def _resolve_pass_target(
         cls, render_pass: RenderPass, width: int, height: int, output_type: str = "2d"
     ) -> RenderTarget:
-        """Retorna (ou cria e cacheia) o RenderTarget de um pass para um
-        tamanho específico. Suporta tanto passes que produzem imagens 2D
-        comuns (MRT framebuffer) quanto passes que produzem uma cubemap."""
         key = (width, height)
         cached = render_pass.target_cache.get(key)
         if cached is not None:
@@ -200,7 +197,7 @@ class PipelineManager:
                 RenderPipelineDescriptor(
                     shader=shader_program,
                     vertex_layout=vertex_layout,
-                    depth_test_enable=True,
+                    depth_test_enable=False if shader.name == "SkyPass" else True,
                     depth_compare_op="less_equal",
                     cull_mode="none"
                 )
@@ -539,13 +536,13 @@ class PipelineManager:
                 # if not hasattr(cls, "k"):
                 #     cls.k = 0
                 # if cls.k > 10:
-                #     if render_pass.name == "ShadowPass":
-                #         cmd.save_image(Path(__file__).parent / "targets" / render_pass.name)
+                # if render_pass.name == "SkyPass":
+                #     cmd.save_image(Path(__file__).parent / "targets" / render_pass.name)
                 #     print("saved")
                 #     cls.k = 0
                 # cls.k += .1
 
-                if pass_idx + 1 == total_passes:
+                if pass_idx + 1 == total_passes and render_pass.domain != RenderDomain.CUBEMAP:
                     dest_target = vdata.target if vdata.win_surface is None else vdata.win_surface.render_target
                     if dest_target is not None:
                         cmd.redirect(dest_target, 0, 0)
@@ -570,6 +567,7 @@ class PipelineManager:
             vp_matrix = cls._CUBE_PROJECTION * view
             vp_matrices_data.extend(bytes(vp_matrix))  # type: ignore
 
+        cls.set_uniform_value("sw_ShadowMatrices", vp_matrices_data)
         cls.set_uniform_value("sw_ShadowMatrices[0]", vp_matrices_data)
 
         pass_targets = {
@@ -599,6 +597,10 @@ class PipelineManager:
             return
 
         prepared = [cls._prepare_cubemap_data(cm, passes) for cm in cubemaps]
+
+        import glfw
+        glfw.make_context_current(cls.gfx_device._dummy_window)
+        
         cls._execute_render_passes(passes, prepared)
 
     # @classmethod

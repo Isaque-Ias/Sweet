@@ -87,7 +87,9 @@ class Player(sw.GameModel):
             )
         # sw.graphics.render.process.PipelineManager.set_uniform_value("sw_Radius", struct.pack("1f", self.k))
 
+        
         if self.win.input.is_key_held(sw.Key.F):
+            # skbx.update(time=0)
             self.k += 0.001
 
         if self.win.input.is_key_held(sw.Key.G):
@@ -136,10 +138,9 @@ new_p1.add_light(light)
 
 scene.add_entity(new_p1)
 
-skbx = sw.gameplay.skybox.SkyBox(sw.gameplay.skybox.SkyBoxType.NISHITA)
-scene.skybox = skbx
-skbx.update(time=0)
-
 scene.activate()
 
 sw.start()
+
+# skbx = sw.gameplay.skybox.SkyBox(sw.gameplay.skybox.SkyBoxType.NISHITA)
+# scene.skybox = skbx

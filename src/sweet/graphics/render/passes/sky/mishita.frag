@@ -28,7 +28,7 @@ float densityMie(float h)      { return exp(-h / HM); }
 
 void main() {
     vec3 rayDir = normalize(v_cube_uv);
-    vec3 rayOrigin = sw_CameraPosition + EARTH_RADIUS;
+    vec3 rayOrigin = vec3(0.0, EARTH_RADIUS + max(sw_CameraPosition.y, 0.0), 0.0);
 
     vec2 hitAtm = raySphereIntersect(rayOrigin, rayDir, ATM_RADIUS);
     if (hitAtm.y < 0.0) {
@@ -91,5 +91,6 @@ void main() {
     vec3 radiance = sw_SunIntensity * (sumR * BETA_R * phaseR + sumM * BETA_M * phaseM);
 
     // Keep output linear for floating-point cubemap baking
+    //FragColor = vec4(rayDir * 0.5 + 0.5, 1.0);
     FragColor = vec4(radiance, 1.0);
 }

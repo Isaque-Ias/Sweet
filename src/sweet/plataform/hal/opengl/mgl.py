@@ -36,6 +36,7 @@ class ModernGLTexture2D(Texture2D):
 
 class ModernGLCubemap(Cubemap):
     def __init__(self, size: int, components: int):
+        glfw.make_context_current(gfx_device._dummy_window) # type: ignore
         self.ctx = gfx_device.ctx
         self.size = size
         self.components = components
@@ -154,6 +155,9 @@ class ModernGLFramebufferTarget(RenderTarget):
     def release(self) -> None:
         self.framebuffer.release()
 
+    def make_current(self):
+        glfw.make_context_current(gfx_device._dummy_window) # type: ignore
+
 class ModernGLVertexLayout(VertexLayout):
     def __init__(self, layout_format: Optional[str], attributes: Optional[list[str]]):
         self.format_str = layout_format
@@ -234,14 +238,14 @@ class _RawCubemapFramebuffer:
         self.height = height
         self.cubemap = cubemap
         self.depth_texture = None  # nunca layered aqui — ver docstring
+
+        self._owner_context_window = gfx_device._dummy_window # type: ignore
+        glfw.make_context_current(self._owner_context_window) # type: ignore
+        
         self.glo = glGenFramebuffers(1) # type: ignore
 
         self._bind_raw()
-
-        # Layered attachment: as 6 faces de uma vez, endereçadas via
-        # gl_Layer no geometry shader.
         glFramebufferTexture(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, cubemap.glo, 0) # type: ignore
-
         glDrawBuffers(1, [GL_COLOR_ATTACHMENT0])
 
         status = glCheckFramebufferStatus(GL_FRAMEBUFFER)
@@ -251,6 +255,7 @@ class _RawCubemapFramebuffer:
         glBindFramebuffer(GL_FRAMEBUFFER, 0)
 
     def _bind_raw(self):
+        glfw.make_context_current(self._owner_context_window) # type: ignore
         glBindFramebuffer(GL_FRAMEBUFFER, self.glo) # type: ignore
 
     def use_face(self, face_index: int):
@@ -558,8 +563,13 @@ class ModernGLCommandBuffer(CommandBuffer):
 
         if vbo is None:
             def empty_cmd():
-                vao = self.ctx.vertex_array(pipeline.program, [])  # type: ignore
-                vao.render(mode=pipeline.mode, vertices=vertex_count, instances=instance_count, first=first_vertex)  # type: ignore
+                # vao = self.ctx.vertex_array(pipeline.program, [])  # type: ignore
+                # vao.render(mode=pipeline.mode, vertices=vertex_count, instances=instance_count, first=first_vertex)  # type: ignore
+                vao = self.ctx.vertex_array(pipeline.program, []) # type: ignore
+                vao.render(mode=pipeline.mode, vertices=vertex_count, instances=instance_count, first=first_vertex) # type: ignore
+                err = glGetError()
+                if err != GL_NO_ERROR:
+                    print(f"[GL ERROR after cubemap draw] {err:#x}")
 
             self._commands.append(empty_cmd)
             return
@@ -975,8 +985,6 @@ class ModernGLGraphicsDevice(GraphicsDevice):
                 self._blit_cube_face(src_native, dst_native, face, size)  # type: ignore
             return
 
-        # --- caminho original, 2D normal (cobre também a backbuffer,
-        #     que cai em has_*_textures=False e usa framebuffer/size direto) ---
         tmp_src_fb: Optional[moderngl.Framebuffer] = None
         tmp_dst_fb: Optional[moderngl.Framebuffer] = None
 
