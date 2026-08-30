@@ -28,7 +28,7 @@ float densityMie(float h)      { return exp(-h / HM); }
 
 void main() {
     vec3 rayDir = normalize(v_cube_uv);
-    vec3 rayOrigin = sw_CameraPosition;
+    vec3 rayOrigin = sw_CameraPosition + EARTH_RADIUS;
 
     vec2 hitAtm = raySphereIntersect(rayOrigin, rayDir, ATM_RADIUS);
     if (hitAtm.y < 0.0) {

@@ -1,4 +1,3 @@
-import struct
 import math
 import sweet as sw
 from sweet.core.linalg.vector import Vec3
@@ -14,25 +13,37 @@ win1.fullscreen = True
 
 assets = sw.Assets.load_assets(r"temp\russo\Untitled.glb")
 assets2 = sw.Assets.load_assets(r"temp\russo\progress.glb")
+assets3 = sw.Assets.load_scene(r"temp\russo\scenario.glb")
 
-obj = sw.Entity("obj")
 # print(assets.meshes)
 scene = sw.Scene("scene")
-first_key = list(assets.meshes.values())[0][0]
+# first_key = list(assets.meshes.values())[0][0]
+# vis = sw.Visual(first_key, sec_key)
+# obj.scale = Vec3(10, 0.1, 10)
+# obj.position = Vec3(0, -1, 0)
 sec_key = list(assets.materials.values())[0]
-vis = sw.Visual(first_key, sec_key)
-obj.scale = Vec3(10, 0.1, 10)
-obj.position = Vec3(0, -1, 0)
-block_visual = sw.Visual(list(assets2.meshes.values())[0][0], sec_key)
-obj.attach_visual(block_visual)
-scene.add_entity(obj)
+# obj = sw.Entity("obj")
+# block_visual = sw.Visual(list(assets2.meshes.values())[0][0], sec_key)
+# obj.attach_visual(block_visual)
+# scene.add_entity(obj)
 
-obj2 = sw.Entity("obj2")
-obj2.scale = Vec3(1, 1, 1)
-obj2.position = Vec3(0, 0, 0)
-obj2.attach_visual(block_visual)
-scene.add_entity(obj2)
+# for entity in assets3[1].entities:
+#     scene.add_entity(entity)
 
+i = 0
+for asset in assets3[0].meshes.values():
+    i += 1
+    tobj = sw.Entity(f"{i}ok")
+    for prim in asset:
+        vis = sw.Visual(prim, sec_key)
+        tobj.attach_visual(vis)
+    scene.add_entity(tobj)
+
+# obj2 = sw.Entity("obj2")
+# obj2.scale = Vec3(1, 1, 1)
+# obj2.position = Vec3(0, 0, 0)
+# obj2.attach_visual(block_visual)
+# scene.add_entity(obj2)
 class Player(sw.GameModel):
     def __init__(self, win: sw.WindowSurface):
         self.camera = sw.Camera()
@@ -80,7 +91,7 @@ class Player(sw.GameModel):
             self.k += 0.001
 
         if self.win.input.is_key_held(sw.Key.G):
-            self.k -= 0.001
+            self.k -= 0.001 
 
         if self.win.input.is_key_held(sw.Key.LEFT_SHIFT):
             self.node.position = Vec3(
@@ -111,14 +122,16 @@ class Player(sw.GameModel):
 new_p1 = sw.Entity("car-los")
 
 light = sw.gameplay.light.Light()
-light.position = Vec3(0, 10, 0)
-light.direction = Vec3(-0.0, -1, 0.0)
+light.position = Vec3(0, 100, -100) * 1.5
+light.direction = Vec3(0, -1, 1)
+# light.position = Vec3(-156.61053068371038, 102.99999999999842, -104.69650543140432)
+# light.direction = Vec3(1, 0, 1)
 new_p1.inherit_model(Player, win=win1)
 first_key = list(assets.meshes.values())[0][0]
 sec_key = list(assets.materials.values())[0]
 vis = sw.Visual(first_key, sec_key)
 new_visual = sw.Visual(list(assets.meshes.values())[0][0], sec_key)
-new_p1.attach_visual(new_visual)
+# new_p1.attach_visual(new_visual)
 new_p1.add_light(light)
 
 scene.add_entity(new_p1)

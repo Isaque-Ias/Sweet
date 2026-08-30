@@ -414,7 +414,6 @@ class PipelineManager:
         if object_count == 0:
             return None
 
-
         pass_targets: dict[str, RenderTarget] = {}
         for render_pass in passes:
             if render_pass.domain == RenderDomain.LIGHT:
@@ -502,7 +501,7 @@ class PipelineManager:
                         light_dir = light.direction
                         cls.set_uniform_value("sw_LightDirection", struct.pack('3f', light_dir.x, light_dir.y, light_dir.z))
 
-                cls.set_uniform_value("sw_CameraPosition", struct.pack('3f', 0, 6371001, 0)) # type: ignore
+                cls.set_uniform_value("sw_CameraPosition", struct.pack('3f', 0, 0, 0)) # type: ignore
 
                 if render_pass.domain == RenderDomain.LIGHT:
                     pass_viewport = (0, 0, cls.light_map_size[0], cls.light_map_size[1])
@@ -537,8 +536,14 @@ class PipelineManager:
                 elif render_pass.domain == RenderDomain.CUBEMAP:
                     cmd.draw(vertex_count=cls.CUBE_VERTEX_COUNT, instance_count=1)
 
-                # if render_pass.name == "SkyPass":
-                #     cmd.save_image(render_pass.name)
+                # if not hasattr(cls, "k"):
+                #     cls.k = 0
+                # if cls.k > 10:
+                #     if render_pass.name == "ShadowPass":
+                #         cmd.save_image(Path(__file__).parent / "targets" / render_pass.name)
+                #     print("saved")
+                #     cls.k = 0
+                # cls.k += .1
 
                 if pass_idx + 1 == total_passes:
                     dest_target = vdata.target if vdata.win_surface is None else vdata.win_surface.render_target

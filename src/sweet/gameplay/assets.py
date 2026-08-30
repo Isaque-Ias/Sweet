@@ -58,6 +58,7 @@ class Assets:
             for prim in mesh_data.primitives:
                 if prim.material is None:
                     continue
+                
                 material_data = content.materials[prim.material]
                 material = cls._load_material(material_data)
                 
@@ -65,9 +66,10 @@ class Assets:
                 source_material_map[mesh_data.name] = material
 
             for source in sources:
-                source_material = source_material_map[mesh_data.name]
-                visual = Visual(source, source_material)
-                entity.attach_visual(visual)
+                source_material = source_material_map.get(mesh_data.name)
+                if source_material:
+                    visual = Visual(source, source_material)
+                    entity.attach_visual(visual)
 
         return entity
 
