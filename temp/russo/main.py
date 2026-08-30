@@ -1,3 +1,4 @@
+import struct
 import math
 import sweet as sw
 from sweet.core.linalg.vector import Vec3
@@ -59,6 +60,7 @@ class Player(sw.GameModel):
         self.win = win
         self.speed = .1
         self.k = 0.025
+        self.acc = 1
 
     def main(self):
         if self.win.input.is_key_held(sw.Key.W):
@@ -93,19 +95,26 @@ class Player(sw.GameModel):
         if self.win.input.is_key_held(sw.Key.G):
             self.k -= 0.01
 
+        if self.win.input.is_key_held(sw.Key.Y):
+            self.acc *= 1.1
+
+        if self.win.input.is_key_held(sw.Key.U):
+            self.acc *= .9
+
         sw.graphics.render.process.PipelineManager.day_time = self.k
+        sw.graphics.render.process.PipelineManager.set_uniform_value("sw_SunIntensity", struct.pack("3f", self.acc, self.acc, self.acc)) 
 
         if self.win.input.is_key_held(sw.Key.LEFT_SHIFT):
             self.node.position = Vec3(
                 self.node.position.x,
-                self.node.position.y - 0.1,
+                self.node.position.y - self.acc,
                 self.node.position.z
             )
 
         if self.win.input.is_key_held(sw.Key.SPACE):
             self.node.position = Vec3(
                 self.node.position.x,
-                self.node.position.y + 0.1,
+                self.node.position.y + self.acc,
                 self.node.position.z
             )
 

@@ -587,12 +587,12 @@ class PipelineManager:
 
                 cam_pos = np.array([0.0, 0.0, 0.0], dtype=np.float32)
                 sun_dir = np.array([0, math.cos(cls.day_time), math.sin(cls.day_time)])# if hasattr(np, 'normalize') else np.array([0.0, 0.7, 0.7]) / np.linalg.norm([0.0, 0.7, 0.7])
-                sun_intensity = np.array([20, 20, 20], dtype=np.float32)
-                sun_color, ambient_color = calculate_sun_and_ambient(cam_pos, sun_dir, sun_intensity)
-
+                # sun_intensity = np.array([20, 20, 20], dtype=np.float32)
+                sun_color, ambient_color = calculate_sun_and_ambient(cam_pos, sun_dir, struct.unpack("3f", cls.get_uniform_value("sw_SunIntensity")))
+                print(ambient_color)
                 cls.set_uniform_value("sw_SunDirection", struct.pack('3f', *sun_dir))
                 cls.set_uniform_value("sw_LightColor", struct.pack('3f', *sun_color))
-                cls.set_uniform_value("sw_AmbientColor", struct.pack('3f', *ambient_color))
+                cls.set_uniform_value("sw_AmbientColor", struct.pack('3f', ambient_color[0] - 0.02, ambient_color[1] - 0.02, ambient_color[2] - 0.02))
 
                 if render_pass.domain == RenderDomain.LIGHT:
                     pass_viewport = (0, 0, cls.light_map_size[0], cls.light_map_size[1])
