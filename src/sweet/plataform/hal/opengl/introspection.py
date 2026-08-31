@@ -5,24 +5,77 @@ from ..manager import Attribute, ResourceOutputs, ResourceInputs, Introspection,
 
 class Introspect:
     _GL_TYPE_MAPPING: dict[int, tuple[str, int]] = {
+        # Floats / Vectors
         gl.GL_FLOAT: ("float", 4), # type: ignore
         gl.GL_FLOAT_VEC2: ("vec2", 8), # type: ignore
-        gl.GL_FLOAT_VEC3: ("vec3", 12), # type: ignore  # Nota: Alinha para 16 bytes em std140
+        gl.GL_FLOAT_VEC3: ("vec3", 12), # type: ignore
         gl.GL_FLOAT_VEC4: ("vec4", 16), # type: ignore
+        
+        # Ints / Vectors
         gl.GL_INT: ("int", 4), # type: ignore
         gl.GL_INT_VEC2: ("ivec2", 8), # type: ignore
         gl.GL_INT_VEC3: ("ivec3", 12), # type: ignore
         gl.GL_INT_VEC4: ("ivec4", 16), # type: ignore
+        
+        # Unsigned Ints / Vectors
         gl.GL_UNSIGNED_INT: ("uint", 4), # type: ignore
         gl.GL_UNSIGNED_INT_VEC2: ("uvec2", 8), # type: ignore
         gl.GL_UNSIGNED_INT_VEC3: ("uvec3", 12), # type: ignore
         gl.GL_UNSIGNED_INT_VEC4: ("uvec4", 16), # type: ignore
+        
+        # Bools
         gl.GL_BOOL: ("bool", 4), # type: ignore
+        gl.GL_BOOL_VEC2: ("bvec2", 8), # type: ignore
+        gl.GL_BOOL_VEC3: ("bvec3", 12), # type: ignore
+        gl.GL_BOOL_VEC4: ("bvec4", 16), # type: ignore
+        
+        # Matrices
+        gl.GL_FLOAT_MAT2: ("mat2", 16), # type: ignore
         gl.GL_FLOAT_MAT3: ("mat3", 36), # type: ignore
         gl.GL_FLOAT_MAT4: ("mat4", 64), # type: ignore
-
+        gl.GL_FLOAT_MAT2x3: ("mat2x3", 24), # type: ignore
+        gl.GL_FLOAT_MAT2x4: ("mat2x4", 32), # type: ignore
+        gl.GL_FLOAT_MAT3x2: ("mat3x2", 24), # type: ignore
+        gl.GL_FLOAT_MAT3x4: ("mat3x4", 48), # type: ignore
+        gl.GL_FLOAT_MAT4x2: ("mat4x2", 32), # type: ignore
+        gl.GL_FLOAT_MAT4x3: ("mat4x3", 48), # type: ignore
+        
+        # 2D / Cube Samplers
+        gl.GL_SAMPLER_1D: ("sampler1D", 4), # type: ignore
         gl.GL_SAMPLER_2D: ("sampler2D", 4), # type: ignore
+        gl.GL_SAMPLER_3D: ("sampler3D", 4), # type: ignore
         gl.GL_SAMPLER_CUBE: ("samplerCube", 4), # type: ignore
+        gl.GL_SAMPLER_1D_SHADOW: ("sampler1DShadow", 4), # type: ignore
+        gl.GL_SAMPLER_2D_SHADOW: ("sampler2DShadow", 4), # type: ignore
+        
+        # Array & Multisample Samplers
+        gl.GL_SAMPLER_1D_ARRAY: ("sampler1DArray", 4), # type: ignore
+        gl.GL_SAMPLER_2D_ARRAY: ("sampler2DArray", 4), # type: ignore
+        gl.GL_SAMPLER_1D_ARRAY_SHADOW: ("sampler1DArrayShadow", 4), # type: ignore
+        gl.GL_SAMPLER_2D_ARRAY_SHADOW: ("sampler2DArrayShadow", 4), # type: ignore
+        gl.GL_SAMPLER_2D_MULTISAMPLE: ("sampler2DMS", 4), # type: ignore
+        gl.GL_SAMPLER_2D_MULTISAMPLE_ARRAY: ("sampler2DMSArray", 4), # type: ignore
+        gl.GL_SAMPLER_CUBE_SHADOW: ("samplerCubeShadow", 4), # type: ignore
+
+        # Integer Samplers (I-Samplers)
+        gl.GL_INT_SAMPLER_1D: ("isampler1D", 4), # type: ignore
+        gl.GL_INT_SAMPLER_2D: ("isampler2D", 4), # type: ignore
+        gl.GL_INT_SAMPLER_3D: ("isampler3D", 4), # type: ignore
+        gl.GL_INT_SAMPLER_CUBE: ("isamplerCube", 4), # type: ignore
+        gl.GL_INT_SAMPLER_1D_ARRAY: ("isampler1DArray", 4), # type: ignore
+        gl.GL_INT_SAMPLER_2D_ARRAY: ("isampler2DArray", 4), # type: ignore
+        gl.GL_INT_SAMPLER_2D_MULTISAMPLE: ("isampler2DMS", 4), # type: ignore
+        gl.GL_INT_SAMPLER_2D_MULTISAMPLE_ARRAY: ("isampler2DMSArray", 4), # type: ignore
+
+        # Unsigned Integer Samplers (U-Samplers)
+        gl.GL_UNSIGNED_INT_SAMPLER_1D: ("usampler1D", 4), # type: ignore
+        gl.GL_UNSIGNED_INT_SAMPLER_2D: ("usampler2D", 4), # type: ignore
+        gl.GL_UNSIGNED_INT_SAMPLER_3D: ("usampler3D", 4), # type: ignore
+        gl.GL_UNSIGNED_INT_SAMPLER_CUBE: ("usamplerCube", 4), # type: ignore
+        gl.GL_UNSIGNED_INT_SAMPLER_1D_ARRAY: ("usampler1DArray", 4), # type: ignore
+        gl.GL_UNSIGNED_INT_SAMPLER_2D_ARRAY: ("usampler2DArray", 4), # type: ignore
+        gl.GL_UNSIGNED_INT_SAMPLER_2D_MULTISAMPLE: ("usampler2DMS", 4), # type: ignore
+        gl.GL_UNSIGNED_INT_SAMPLER_2D_MULTISAMPLE_ARRAY: ("usampler2DMSArray", 4) # type: ignore
     }
 
     @classmethod

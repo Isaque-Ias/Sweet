@@ -161,6 +161,36 @@ class Deffered(Graph):
 
         lighting_pass.add_output("Light_Out")
 
+        # bloom
+
+        bloom_pass = RenderShader("BloomPass", cls._file_to_node(
+            _PASSES / "fullscreen.vert",
+            _PASSES / "bloom" / "bloom.frag",
+        ), RenderDomain.SCREEN)
+
+        bloom_pass.connect_input(
+            "Bloom_Light",
+            lighting_pass,
+            "Light_Out",
+        )
+
+        bloom_pass.add_output("Bloom_Out")
+
+        # blur bloom
+
+        bloom_blur_pass = RenderShader("BlurBloomPass", cls._file_to_node(
+            _PASSES / "fullscreen.vert",
+            _PASSES / "bloom" / "blur.frag",
+        ), RenderDomain.SCREEN)
+
+        bloom_blur_pass.connect_input(
+            "Bloom_Input",
+            bloom_pass,
+            "Bloom_Out",
+        )
+
+        bloom_blur_pass.add_output("BloomBlur_Out")
+
         # sky
 
         sky_pass = RenderShader("SkyPass", cls._file_to_node(
@@ -169,12 +199,18 @@ class Deffered(Graph):
         ), RenderDomain.SCREEN)
 
         sky_pass.connect_input(
-            "Sky_Light",
-            lighting_pass,
-            "Light_Out",
+            "Sky_Bloom",
+            bloom_blur_pass,
+            "BloomBlur_Out"
         )
 
-        sky_pass.add_output("FragColor")
+        sky_pass.connect_input(
+            "Sky_Light",
+            lighting_pass,
+            "Light_Out"
+        )
+
+        sky_pass.add_output("Sky_Out")
 
         # present
 
@@ -186,7 +222,7 @@ class Deffered(Graph):
         present_pass.connect_input(
             "Present_Light",
             sky_pass,
-            "FragColor",
+            "Sky_Out",
         )
 
         present_pass.add_output("Backbuffer")
@@ -198,6 +234,8 @@ class Deffered(Graph):
             ssao_blur_x_pass,
             ssao_blur_y_pass,
             lighting_pass,
+            bloom_pass,
+            bloom_blur_pass,
             sky_pass,
             present_pass,
         ]:

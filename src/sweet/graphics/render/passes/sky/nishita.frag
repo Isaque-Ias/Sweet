@@ -1,12 +1,13 @@
 #version 330 core
 
-out vec4 FragColor;
+out vec4 Sky_Out;
 in vec2 v_uv;
 
 // Uniforms
-uniform sampler2D Sky_Light;        // Texture from the previous lighting pass
-uniform mat4 sw_InvView;            // Inverse View Matrix (Camera-to-World)
-uniform mat4 sw_InvProjection;      // Inverse Projection Matrix (Clip-to-View)
+uniform sampler2D Sky_Light;         // Texture from the previous lighting pass
+uniform sampler2D Sky_Bloom;         // Texture from the previous lighting pass
+uniform mat4 sw_InvView;             // Inverse View Matrix (Camera-to-World)
+uniform mat4 sw_InvProjection;       // Inverse Projection Matrix (Clip-to-View)
 
 uniform vec3 sw_SunDirection;
 uniform vec3 sw_SunIntensity;
@@ -16,9 +17,18 @@ const float ATM_RADIUS   = 6471000.0; // 6,471 km
 const float HR           = 8000.0;    // Rayleigh scale height (8 km)
 const float HM           = 1200.0;    // Mie scale height (1.2 km)
 
+const float bloomStrength = 0.7;
+
 const vec3 BETA_R = vec3(5.8e-6, 1.35e-5, 3.31e-5);
 const vec3 BETA_M = vec3(4.0e-6);
 const float G     = 0.76;
+
+// Pseudo-random noise generator to dither out banding steps
+float interleaved_gradient_noise(vec2 uv)
+{
+    vec3 magic = vec3(0.06711056, 0.00583715, 52.9829189);
+    return fract(magic.z * fract(dot(uv, magic.xy)));
+}
 
 vec2 raySphereIntersect(vec3 ro, vec3 rd, float radius) {
     float b = dot(ro, rd);
@@ -28,15 +38,17 @@ vec2 raySphereIntersect(vec3 ro, vec3 rd, float radius) {
     return vec2(-b - sqrt(d), -b + sqrt(d));
 }
 
-float densityRayleigh(float h) { return exp(-h / HR); }
-float densityMie(float h)      { return exp(-h / HM); }
+float densityRayleigh(float h) { return exp(-max(h, 0.0) / HR); }
+float densityMie(float h)      { return exp(-max(h, 0.0) / HM); }
 
 void main() {
     vec4 sceneColor = texture(Sky_Light, v_uv);
+    vec3 bloomColor = texture(Sky_Bloom, v_uv).rgb;
 
     // If the pixel contains geometry from the lighting pass, keep it
     if (sceneColor.a >= 0.1) {
-        FragColor = sceneColor;
+        Sky_Out = sceneColor + vec4(bloomColor * bloomStrength, 1.0);
+        //Sky_Out = sceneColor;
         return;
     }
 
@@ -49,11 +61,11 @@ void main() {
     viewRay = viewRay / viewRay.w;
     vec3 rayDir = normalize(mat3(sw_InvView) * viewRay.xyz);
 
-    vec3 rayOrigin = sw_CameraPosition + vec3(0.0, EARTH_RADIUS + 1000, 0.0);
+    vec3 rayOrigin = sw_CameraPosition + vec3(0.0, EARTH_RADIUS + 1000.0, 0.0);
 
     vec2 hitAtm = raySphereIntersect(rayOrigin, rayDir, ATM_RADIUS);
     if (hitAtm.y < 0.0) {
-        FragColor = vec4(0.0, 0.0, 0.0, 1.0);
+        Sky_Out = vec4(0.0, 0.0, 0.0, 1.0);
         return;
     }
 
@@ -68,11 +80,17 @@ void main() {
     float cosTheta = dot(rayDir, sw_SunDirection);
     float phaseR = (3.0 / (16.0 * 3.14159265)) * (1.0 + cosTheta * cosTheta);
     float phaseM = (3.0 / (8.0 * 3.14159265)) * ((1.0 - G * G) * (1.0 + cosTheta * cosTheta)) / 
-                   ((2.0 + G * G) * pow(1.0 + G * G - 2.0 * G * cosTheta, 1.5));
+                 ((2.0 + G * G) * pow(1.0 + G * G - 2.0 * G * cosTheta, 1.5));
 
-    const int STEPS = 16;
-    const int LIGHT_STEPS = 8;
-    float stepSize = (tMax - tMin) / float(STEPS);
+    // Increased steps for smoother integration gradients
+    const int STEPS = 4;
+    const int LIGHT_STEPS = 2;
+    
+    float totalLength = tMax - tMin;
+    float stepSize = totalLength / float(STEPS);
+    
+    // Apply jitter/dithering based on pixel coordinates to mask low-sample banding
+    float noise = interleaved_gradient_noise(gl_FragCoord.xy);
     
     vec3 sumR = vec3(0.0);
     vec3 sumM = vec3(0.0);
@@ -80,7 +98,8 @@ void main() {
     float opticalDepthM = 0.0;
 
     for (int i = 0; i < STEPS; ++i) {
-        vec3 samplePos = rayOrigin + rayDir * (tMin + (float(i) + 0.5) * stepSize);
+        float t = tMin + (float(i) + noise) * stepSize;
+        vec3 samplePos = rayOrigin + rayDir * t;
         float height = length(samplePos) - EARTH_RADIUS;
 
         float hr = densityRayleigh(height) * stepSize;
@@ -112,5 +131,5 @@ void main() {
     vec3 radiance = sw_SunIntensity * (sumR * BETA_R * phaseR + sumM * BETA_M * phaseM);
 
     // Output the calculated atmospheric scattering to the background
-    FragColor = vec4(radiance, 1.0);
+    Sky_Out = vec4(radiance, 1.0) + vec4(bloomColor * bloomStrength, 1.0);
 }

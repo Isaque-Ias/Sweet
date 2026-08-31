@@ -34,5 +34,5 @@ class Light:
 
     def get_projection(self):
         if self.type == LightType.POINT:
-            # return glm.ortho(-100, 100, -100, 100, 1, 50)#glm.perspective(self.fov * 3.1415 / 180, 1, 1, 100) # type: ignore
-            return glm.perspective(self.fov * 3.1415 / 180, 1, 100, 500) # type: ignore
+            return glm.ortho(-200.0, 200.0, -200.0, 200.0, -100.0, 300.0)#glm.perspective(self.fov * 3.1415 / 180, 1, 1, 100) # type: ignore
+            return glm.perspective(self.fov * 3.1415 / 180, 1, .1, 500) # type: ignore

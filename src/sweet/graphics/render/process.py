@@ -81,26 +81,12 @@ def cpu_ray_sphere_intersect(ro, rd, radius):
     return np.array([-b - sqrt_d, -b + sqrt_d], dtype=np.float32)
 
 def calculate_sun_and_ambient(camera_pos, sun_direction, base_sun_intensity):
-    """
-    Computes dynamic sun light color and ambient light color based on Nishita scattering.
-    
-    Parameters:
-    - camera_pos: numpy array [x, y, z] of camera world position
-    - sun_direction: numpy array [x, y, z] normalized direction pointing TOWARDS the sun
-    - base_sun_intensity: numpy array [r, g, b] or float for raw sun energy
-    
-    Returns:
-    - (sun_color, ambient_color) as numpy arrays
-    """
     ray_origin = camera_pos + np.array([0.0, EARTH_RADIUS, 0.0], dtype=np.float32)
 
-    # 1. Calculate Sun Color (Direct Light with Atmospheric Attenuation)
-    sun_elevation = sun_direction[1] # Y component
+    sun_elevation = sun_direction[1]
     if sun_elevation < -0.1:
-        # Sun is below the horizon
         return np.array([0.0, 0.0, 0.0], dtype=np.float32), np.array([0.02, 0.02, 0.02], dtype=np.float32)
 
-    # Trace ray from camera/surface to top of atmosphere along sun direction
     hit_sun_atm = cpu_ray_sphere_intersect(ray_origin, sun_direction, ATM_RADIUS)
     light_step_size = hit_sun_atm[1] / 8.0
     
@@ -352,8 +338,6 @@ class PipelineManager:
 
             render_passes.append(render_pass)
 
-            # print(inputs, render_pass.name)
-
         cls._graphs[graph.name] = render_passes
 
     @classmethod
@@ -589,7 +573,7 @@ class PipelineManager:
                 sun_dir = np.array([0, math.cos(cls.day_time), math.sin(cls.day_time)])# if hasattr(np, 'normalize') else np.array([0.0, 0.7, 0.7]) / np.linalg.norm([0.0, 0.7, 0.7])
                 # sun_intensity = np.array([20, 20, 20], dtype=np.float32)
                 sun_color, ambient_color = calculate_sun_and_ambient(cam_pos, sun_dir, struct.unpack("3f", cls.get_uniform_value("sw_SunIntensity")))
-                print(ambient_color)
+                
                 cls.set_uniform_value("sw_SunDirection", struct.pack('3f', *sun_dir))
                 cls.set_uniform_value("sw_LightColor", struct.pack('3f', *sun_color))
                 cls.set_uniform_value("sw_AmbientColor", struct.pack('3f', ambient_color[0] - 0.02, ambient_color[1] - 0.02, ambient_color[2] - 0.02))
@@ -627,14 +611,14 @@ class PipelineManager:
                 elif render_pass.domain == RenderDomain.CUBEMAP:
                     cmd.draw(vertex_count=cls.CUBE_VERTEX_COUNT, instance_count=1)
 
-                # if not hasattr(cls, "k"):
-                #     cls.k = 0
-                # if cls.k > 10:
-                #     # if render_pass.name == "ShadowPass":
-                # cmd.save_image(Path(__file__).parent / "targets" / render_pass.name)
-                #     print("saved")
-                #     cls.k = 0
-                # cls.k += .1
+                if not hasattr(cls, "k"):
+                    cls.k = 0
+                if cls.k > 10:
+                    if render_pass.name == "ShadowPass":
+                        cmd.save_image(Path(__file__).parent / "targets" / render_pass.name)
+                        print("saved")   
+                    cls.k = 0
+                cls.k += .1
 
                 if pass_idx + 1 == total_passes:
                     dest_target = vdata.target if vdata.win_surface is None else vdata.win_surface.render_target
