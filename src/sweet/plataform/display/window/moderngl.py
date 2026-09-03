@@ -37,6 +37,7 @@ class _SecondaryWindowProxy:
                 mode = glfw.get_video_mode(monitor) # type: ignore
                 if mode:
                     if value:
+                        self._size = (mode.size.width, mode.size.height)
                         glfw.set_window_monitor( # type: ignore
                             self._window, monitor, 0, 0, mode.size.width, mode.size.height, mode.refresh_rate
                         )

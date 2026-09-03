@@ -488,21 +488,6 @@ class PipelineManager:
                 w, h = vp_width, vp_height
             pass_targets[render_pass.name] = cls._resolve_pass_target(render_pass, w, h, render_pass.output_type)
 
-        # pass_targets: dict[str, RenderTarget] = {}
-        # for render_pass in passes:
-        #     if render_pass.domain in [RenderDomain.LIGHT]:
-        #         pass_targets[render_pass.name] = render_pass.target_cache[cls.light_map_size]
-        #     else:
-        #         if (vp_width, vp_height) in render_pass.target_cache:
-        #             pass_targets[render_pass.name] = render_pass.target_cache[(vp_width, vp_height)]
-        #         else:
-        #             total_outputs = len(render_pass.target.color_textures)
-        #             new_target = cls.gfx_device.create_mrt_framebuffer(
-        #                 vp_width, vp_height, [4] * total_outputs, True
-        #             )
-        #             render_pass.target_cache[(vp_width, vp_height)] = new_target
-        #             pass_targets[render_pass.name] = new_target
-
         return ViewPreparedData(
             view=view,
             scene=scene,
@@ -611,14 +596,9 @@ class PipelineManager:
                 elif render_pass.domain == RenderDomain.CUBEMAP:
                     cmd.draw(vertex_count=cls.CUBE_VERTEX_COUNT, instance_count=1)
 
-                if not hasattr(cls, "k"):
+                if not hasattr(cls, "k") and render_pass.name == "ShadowPass":
+                    cmd.save_image(Path(__file__).parent / "targets" / render_pass.name)
                     cls.k = 0
-                if cls.k > 10:
-                    if render_pass.name == "ShadowPass":
-                        cmd.save_image(Path(__file__).parent / "targets" / render_pass.name)
-                        print("saved")   
-                    cls.k = 0
-                cls.k += .1
 
                 if pass_idx + 1 == total_passes:
                     dest_target = vdata.target if vdata.win_surface is None else vdata.win_surface.render_target

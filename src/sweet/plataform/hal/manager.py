@@ -137,19 +137,16 @@ class RenderTarget(ABC):
     def size(self) -> tuple[int, int]:
         pass
 
-    @property
     @abstractmethod
-    def color_textures(self) -> list[Texture2D]:
+    def use(self) -> None:
         pass
 
-    @property
     @abstractmethod
-    def depth_texture(self) -> Optional[Texture2D]:
+    def clear(self, color: tuple[float, float, float, float] = (0.0, 0.0, 0.0, 1.0), depth: float = 1.0) -> None:
         pass
 
-    @property
     @abstractmethod
-    def framebuffer(self) -> Any:
+    def native_handle(self) -> Any:
         pass
 
     @abstractmethod

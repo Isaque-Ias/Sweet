@@ -31,9 +31,6 @@ layout(std430, binding = 4) readonly buffer sw_RenderObjects
     RenderObject objects[];
 };
 
-uniform mat4 sw_LightView;
-uniform mat4 sw_LightProjection;
-
 void main()
 {
     RenderObject object = objects[gl_InstanceID];
@@ -46,14 +43,9 @@ void main()
         return;
     }
 
-    uint idx_location =
-        object.indices.offset + local_index;
-
-    uint vertex_index =
-        indices[idx_location];
-
-    uint pos_location =
-        object.positions.offset + vertex_index * 3;
+    uint idx_location = object.indices.offset + local_index;
+    uint vertex_index = indices[idx_location];
+    uint pos_location = object.positions.offset + vertex_index * 3;
 
     vec3 local_pos = vec3(
         positions[pos_location + 0],
@@ -61,11 +53,6 @@ void main()
         positions[pos_location + 2]
     );
 
-    vec4 world_pos =
-        object.model * vec4(local_pos, 1.0);
-
-    gl_Position =
-        sw_LightProjection *
-        sw_LightView *
-        world_pos;
+    // Transform to world space and pass to geometry shader
+    gl_Position = object.model * vec4(local_pos, 1.0);
 }

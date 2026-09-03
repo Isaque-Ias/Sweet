@@ -86,28 +86,14 @@ class ModernGLFramebufferTarget(RenderTarget):
         self._is_cubemap = False
 
         mgl_color_attachments: list[Any] = []
-        target_cubemap: Optional[moderngl.TextureCube] = None
-
-        first_fmt = color_formats[0] if len(color_formats) > 0 else color_formats
-
-        if isinstance(first_fmt, moderngl.TextureCube):
-            target_cubemap = first_fmt
-            self._is_cubemap = True
-        elif hasattr(first_fmt, "texture") and isinstance(getattr(first_fmt, "texture"), moderngl.TextureCube):
-            target_cubemap = first_fmt.texture  # type: ignore
-            self._is_cubemap = True
-
-        if self._is_cubemap and target_cubemap is not None:
-            self._color_textures = [first_fmt]
-            # Leave mgl_color_attachments empty so ModernGL creates an unattached FBO shell
-        else:
-            for fmt in color_formats:
-                if isinstance(fmt, int):
-                    tex = ModernGLTexture2D(width, height, components=fmt)
-                else:
-                    tex = cast(ModernGLTexture2D, fmt)
-                self._color_textures.append(tex)
-                mgl_color_attachments.append(tex.texture)
+    
+        for fmt in color_formats:
+            if isinstance(fmt, int):
+                tex = ModernGLTexture2D(width, height, components=fmt)
+            else:
+                tex = cast(ModernGLTexture2D, fmt)
+            self._color_textures.append(tex)
+            mgl_color_attachments.append(tex.texture)
 
         self._depth_texture: Optional[ModernGLTexture2D] = None
         mgl_depth_attachment: Optional[moderngl.Texture] = None
@@ -121,19 +107,10 @@ class ModernGLFramebufferTarget(RenderTarget):
             self._depth_texture.texture = depth_mgl_tex
             mgl_depth_attachment = depth_mgl_tex
 
-        self.native_handle = ctx.framebuffer(
+        self._native_handle = ctx.framebuffer(
             color_attachments=mgl_color_attachments,
             depth_attachment=mgl_depth_attachment,
         )
-
-        if self._is_cubemap and target_cubemap is not None:
-            self._color_textures = [first_fmt]
-            self._depth_texture = None  # cubemap layered não aceita depth 2D — ver _RawCubemapFramebuffer
-
-            self.native_handle = _RawCubemapFramebuffer(
-                ctx, width, height, target_cubemap
-            )
-            return
 
     @property
     def size(self) -> tuple[int, int]:
@@ -147,12 +124,17 @@ class ModernGLFramebufferTarget(RenderTarget):
     def depth_texture(self) -> Optional[ModernGLTexture2D]:
         return self._depth_texture
 
-    @property
-    def framebuffer(self) -> Any:
-        return self.native_handle
+    def native_handle(self) -> Any:
+        return self._native_handle
+
+    def use(self):
+        self._native_handle.use()
+
+    def clear(self, color: tuple[float, float, float, float] = (0.0, 0.0, 0.0, 1.0), depth: float = 1.0):
+        self._native_handle.clear(color=color, depth=depth)
 
     def release(self) -> None:
-        self.framebuffer.release()
+        self._native_handle.release()
 
 class ModernGLVertexLayout(VertexLayout):
     def __init__(self, layout_format: Optional[str], attributes: Optional[list[str]]):
@@ -317,12 +299,13 @@ class ModernGLWindowTarget(RenderTarget):
     def depth_texture(self) -> Optional[Texture2D]:
         return None
 
-    @property
-    def native_handle(self) -> moderngl.Framebuffer:
-        return self.ctx.screen
+    def use(self):
+        self.ctx.screen.use()
 
-    @property
-    def framebuffer(self) -> moderngl.Framebuffer:
+    def clear(self, color: tuple[float, float, float, float] = (0.0, 0.0, 0.0, 1.0), depth: float = 1.0):
+        self.ctx.clear(*color, depth=depth)
+
+    def native_handle(self) -> moderngl.Framebuffer:
         return self.ctx.screen
 
     def release(self) -> None:
@@ -469,7 +452,7 @@ class ModernGLCommandBuffer(CommandBuffer):
 
             self.ctx.disable(moderngl.DEPTH_TEST)
 
-            fb = t.framebuffer
+            fb = t.native_handle()
             w, h = t.size
             effective_vp = vp if vp is not None else (0, 0, w, h)
 
@@ -531,9 +514,9 @@ class ModernGLCommandBuffer(CommandBuffer):
     ) -> None:
         def use():
             if src_attachment == -1:
-                src_render_target.framebuffer.depth_attachment.use(location=location)
+                src_render_target.native_handle().depth_attachment.use(location=location)
             else:
-                src_render_target.framebuffer.color_attachments[src_attachment].use(location=location)
+                src_render_target.native_handle().color_attachments[src_attachment].use(location=location)
 
         self._commands.append(use)
 
@@ -791,10 +774,10 @@ class ModernGLCommandBuffer(CommandBuffer):
             if attachment is None:
                 channels = len(target.color_textures)  # type: ignore
                 for i in range(channels):
-                    self._save_attachment_image(target.framebuffer, i, f"{filename}_{i}.png")  # type: ignore
-                self._save_attachment_image(target.framebuffer, -1, f"{filename}_depth.png")  # type: ignore
+                    self._save_attachment_image(target.native_handle(), i, f"{filename}_{i}.png")  # type: ignore
+                self._save_attachment_image(target.native_handle(), -1, f"{filename}_depth.png")  # type: ignore
             else:
-                self._save_attachment_image(target.framebuffer, attachment, filename + ".png")  # type: ignore
+                self._save_attachment_image(target.native_handle(), attachment, filename + ".png")  # type: ignore
 
         self._commands.append(cmd)
 
@@ -990,7 +973,7 @@ class ModernGLGraphicsDevice(GraphicsDevice):
                 src_fb = tmp_src_fb
                 src_w, src_h = src_native.width, src_native.height  # type: ignore
             else:
-                src_fb = src_target.framebuffer
+                src_fb = src_target.native_handle()
                 src_w, src_h = src_target.size
 
             if has_dst_textures:
@@ -1002,7 +985,7 @@ class ModernGLGraphicsDevice(GraphicsDevice):
                 dst_fb = tmp_dst_fb
                 dst_w, dst_h = dst_native.width, dst_native.height  # type: ignore
             else:
-                dst_fb = dst_target.framebuffer
+                dst_fb = dst_target.native_handle()
                 dst_w, dst_h = dst_target.size
 
             src_fb.viewport = src_viewport if src_viewport is not None else (0, 0, src_w, src_h)
