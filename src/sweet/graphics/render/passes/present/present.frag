@@ -8,29 +8,7 @@ uniform sampler2D Present_Light;
 
 void main()
 {
-    vec3 color =
-        texture(
-            Present_Light,
-            v_uv
-        ).rgb;
+    vec3 color = texture(Present_Light, v_uv).rgb;
 
-    /*
-     * Temporary display transform.
-     *
-     * The lighting buffer can later be HDR.
-     */
-    color =
-        color / (color + vec3(1.0));
-
-    /*
-     * Gamma correction.
-     */
-    color =
-        pow(
-            color,
-            vec3(1.0 / 2.2)
-        );
-
-    out_color =
-        vec4(color, 1.0);
+    out_color = vec4(color, 1.0);
 }

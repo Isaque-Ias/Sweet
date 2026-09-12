@@ -176,6 +176,35 @@ class Deffered(Graph):
 
         bloom_pass.add_output("Bloom_Out")
 
+        # ---------------------------------------------------------------------
+        # 2. VOLUMETRIC FOG PASS (Composites fog over lit solid scene)
+        # ---------------------------------------------------------------------
+        # fog_pass = RenderShader("VolumetricFogPass", cls._file_to_node(
+        #     _PASSES / "fullscreen.vert",
+        #     _PASSES / "fog" / "fog.frag",
+        # ), RenderDomain.SCREEN)
+
+        # # Reads current lit scene color to blend fog onto
+        # fog_pass.connect_input(
+        #     "fogSceneColor",
+        #     lighting_pass,
+        #     "Light_Out",
+        # )
+        # # Reads scene depth to stop raymarching at solid surfaces
+        # fog_pass.connect_input(
+        #     "fogDepth",
+        #     gbuffer_pass,
+        #     "depth_GBuffer",
+        # )
+        # # Reads shadow map for volumetric light shafts/god rays
+        # fog_pass.connect_input(
+        #     "fogShadow",
+        #     shadow_pass,
+        #     "depth_ShadowMap",
+        # )
+
+        # fog_pass.add_output("outFog")
+
         # blur bloom
 
         bloom_blur_pass = RenderShader("BlurBloomPass", cls._file_to_node(
@@ -193,24 +222,54 @@ class Deffered(Graph):
 
         # sky
 
-        sky_pass = RenderShader("SkyPass", cls._file_to_node(
-            _PASSES / "fullscreen.vert",
-            _PASSES / "sky" / "nishita.frag",
+        background_pass = RenderShader("SkyPass", cls._file_to_node(
+            _PASSES / "sky" / "background.vert",
+            _PASSES / "sky" / "background.frag",
         ), RenderDomain.SCREEN)
 
-        sky_pass.connect_input(
-            "Sky_Bloom",
-            bloom_blur_pass,
-            "BloomBlur_Out"
-        )
-
-        sky_pass.connect_input(
-            "Sky_Light",
+        background_pass.connect_input(
+            "bgLight",
             lighting_pass,
             "Light_Out"
         )
 
-        sky_pass.add_output("Sky_Out")
+        background_pass.add_output("bgOut")
+
+        # Luminance
+
+        luminance_pass = RenderShader("LuminancePass", cls._file_to_node(
+            _PASSES / "fullscreen.vert",
+            _PASSES / "tonemap" / "luminance.frag",
+        ), RenderDomain.SCREEN)
+
+        luminance_pass.connect_input(
+            "hdrSceneTexture",
+            background_pass,
+            "bgOut",
+        )
+
+        luminance_pass.add_output("LumPass")
+
+        # Tonemap
+
+        tonemap_pass = RenderShader("TonemapPass", cls._file_to_node(
+            _PASSES / "fullscreen.vert",
+            _PASSES / "tonemap" / "tonemap.frag",
+        ), RenderDomain.SCREEN)
+
+        tonemap_pass.connect_input(
+            "TonehdrSceneTexture",
+            background_pass,
+            "bgOut",
+        )
+
+        tonemap_pass.connect_input(
+            "avgLuminanceTex",
+            luminance_pass,
+            "LumPass",
+        )
+
+        tonemap_pass.add_output("TonePass")
 
         # present
 
@@ -221,8 +280,10 @@ class Deffered(Graph):
 
         present_pass.connect_input(
             "Present_Light",
-            sky_pass,
-            "Sky_Out",
+            # lighting_pass,
+            # "Light_Out",
+            tonemap_pass,
+            "TonePass",
         )
 
         present_pass.add_output("Backbuffer")
@@ -236,8 +297,10 @@ class Deffered(Graph):
             lighting_pass,
             bloom_pass,
             bloom_blur_pass,
-            sky_pass,
-            present_pass,
+            background_pass,
+            luminance_pass,
+            tonemap_pass,
+            present_pass
         ]:
             cls.graph.add_shader(render_pass)
 

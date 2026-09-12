@@ -175,8 +175,6 @@ class Scene:
     def skybox(self, skybox: SkyBox):
         self._skybox = skybox
         skybox.scene = self
-        for view in skybox.views:
-            view.set_scene(self)
 
     def get_lights(self):
         lights: list[Light] = []

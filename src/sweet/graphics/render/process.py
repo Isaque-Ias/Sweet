@@ -1,4 +1,5 @@
 from __future__ import annotations
+
 from sweet.plataform.display.window.window import WindowSurface
 from ..upload import UploadManager, GPUMeshSource
 from sweet.resources.assets.importer import ImportManager
@@ -62,64 +63,52 @@ class ViewPreparedData:
 
 import numpy as np
 
-# Constants matching your shader
-EARTH_RADIUS = 6371000.0
-ATM_RADIUS   = 6471000.0
-HR           = 8000.0
-HM           = 1200.0
 
-BETA_R = np.array([5.8e-6, 1.35e-5, 3.31e-5], dtype=np.float32)
-BETA_M = np.array([4.0e-6, 4.0e-6, 4.0e-6], dtype=np.float32)
+class CubemapRenderer:
+    @staticmethod
+    def look_at(eye, target, up):
+        f = target - eye
+        f /= np.linalg.norm(f)
+        s = np.cross(f, up)
+        s /= np.linalg.norm(s)
+        u = np.cross(s, f)
 
-def cpu_ray_sphere_intersect(ro, rd, radius):
-    b = np.dot(ro, rd)
-    c = np.dot(ro, ro) - radius * radius
-    d = b * b - c
-    if d < 0.0:
-        return np.array([-1.0, -1.0], dtype=np.float32)
-    sqrt_d = np.sqrt(d)
-    return np.array([-b - sqrt_d, -b + sqrt_d], dtype=np.float32)
+        m = np.identity(4, dtype=np.float32)
+        m[0, :3] = s
+        m[1, :3] = u
+        m[2, :3] = -f
+        m[:3, 3] = -eye
+        return m
 
-def calculate_sun_and_ambient(camera_pos, sun_direction, base_sun_intensity):
-    ray_origin = camera_pos + np.array([0.0, EARTH_RADIUS, 0.0], dtype=np.float32)
+    @staticmethod
+    def perspective(fov_deg, aspect, near, far):
+        f = 1.0 / np.tan(np.radians(fov_deg) / 2.0)
+        m = np.zeros((4, 4), dtype=np.float32)
+        m[0, 0] = f / aspect
+        m[1, 1] = f
+        m[2, 2] = (far + near) / (near - far)
+        m[2, 3] = (2.0 * far * near) / (near - far)
+        m[3, 2] = -1.0
+        return m
 
-    sun_elevation = sun_direction[1]
-    if sun_elevation < -0.1:
-        return np.array([0.0, 0.0, 0.0], dtype=np.float32), np.array([0.02, 0.02, 0.02], dtype=np.float32)
 
-    hit_sun_atm = cpu_ray_sphere_intersect(ray_origin, sun_direction, ATM_RADIUS)
-    light_step_size = hit_sun_atm[1] / 8.0
-    
-    optical_depth_r = 0.0
-    optical_depth_m = 0.0
+    _FACE_DIRECTIONS = [
+        (np.array([1, 0, 0]),  np.array([0, -1, 0])),  # +X (Right)
+        (np.array([-1, 0, 0]), np.array([0, -1, 0])),  # -X (Left)
+        (np.array([0, 1, 0]),  np.array([0, 0, 1])),   # +Y (Top)
+        (np.array([0, -1, 0]), np.array([0, 0, -1])),  # -Y (Bottom)
+        (np.array([0, 0, 1]),  np.array([0, -1, 0])),  # +Z (Front)
+        (np.array([0, 0, -1]), np.array([0, -1, 0])),  # -Z (Back)
+    ]
 
-    for j in range(8):
-        light_sample_pos = ray_origin + sun_direction * ((float(j) + 0.5) * light_step_size)
-        light_height = np.linalg.norm(light_sample_pos) - EARTH_RADIUS
-        if light_height < 0.0:
-            light_height = 0.0
-
-        optical_depth_r += np.exp(-light_height / HR) * light_step_size
-        optical_depth_m += np.exp(-light_height / HM) * light_step_size
-
-    # Beer's Law for sun attenuation through the atmosphere
-    tau = BETA_R * optical_depth_r + BETA_M * 1.1 * optical_depth_m
-    sun_attenuation = np.exp(-tau)
-    
-    sun_color = base_sun_intensity * sun_attenuation
-
-    # 2. Calculate Ambient Color (Approximated via Zenith / Overhead Sky Direction)
-    zenith_dir = np.array([0.0, 1.0, 0.0], dtype=np.float32)
-    cos_theta = np.dot(zenith_dir, sun_direction)
-    phase_r = (3.0 / (16.0 * np.pi)) * (1.0 + cos_theta * cos_theta)
-    
-    # Approximate overhead sky scattering luminance
-    zenith_sky = base_sun_intensity * (BETA_R * phase_r * 0.0005)
-    
-    # Combine zenith sky with a minimum ambient floor
-    ambient_color = np.maximum(zenith_sky, np.array([0.03, 0.03, 0.03], dtype=np.float32)) + (sun_color * 0.05)
-
-    return sun_color, ambient_color
+    @classmethod
+    def _build_mvp_matrices(cls):
+        proj = cls.perspective(90.0, 1.0, 0.1, 100.0)
+        mvps = []
+        for target, up in cls._FACE_DIRECTIONS:
+            view = cls.look_at(np.array([0, 0, 0], dtype=np.float32), target, up)
+            mvps.append((proj @ view).T)
+        return np.array(mvps, dtype=np.float32)
 
 class PipelineManager:
     _initialized = False
@@ -158,10 +147,10 @@ class PipelineManager:
                 f"Cubemaps precisam ser quadradas (recebido {width}x{height}) "
                 f"no pass '{render_pass.name}'."
             )
-            cubemap = cls.gfx_device.create_cubemap(width, 4)
+            cubemap = cls.gfx_device.create_cubemap_framebuffer(width, [4], 4)
             new_target = cubemap.get_target()
         else:
-            total_outputs = len(render_pass.target.color_textures)
+            total_outputs = len(render_pass.target.color_attachments)
             new_target = cls.gfx_device.create_mrt_framebuffer(
                 width, height, [4] * total_outputs, True
             )
@@ -176,7 +165,6 @@ class PipelineManager:
             'vec2': 2,
             'vec3': 3,
             'vec4': 4,
-            # Integer mapping if your types use int/uint variants
             'int': 1, 'ivec2': 2, 'ivec3': 3, 'ivec4': 4,
             'uint': 1, 'uvec2': 2, 'uvec3': 3, 'uvec4': 4,
         }
@@ -271,7 +259,7 @@ class PipelineManager:
                 dependent = shader.dependencies.get(input.name)
                 
                 if dependent is None:
-                    if input.type_name == "sampler2D":
+                    if input.type_name in ["sampler2D", "samplerCube", "sampler2DShadow", "samplerCubeShadow"]:
                         inputs[input.name] = ShaderResource(source=input.name, source_attachment=src_output_location, dest_location=input.location, is_imported=True) # type: ignore
                         shader.program.set_program_location(input.name, input.location) # type: ignore
 
@@ -293,7 +281,7 @@ class PipelineManager:
                 source = src_shader.name
                 inputs[input.name] = ShaderResource(source=source, source_attachment=src_output_location, dest_location=input.location, is_imported=False) # type: ignore
 
-                if input.type_name == "sampler2D":
+                if input.type_name in ["sampler2D", "samplerCube", "sampler2DShadow", "samplerCubeShadow"]:
                     shader.program.set_program_location(input.name, input.location) # type: ignore
 
             output_locations = introspection.outputs.targets
@@ -312,7 +300,7 @@ class PipelineManager:
                 output_type = "2d"
 
             if output_type == "cubemap":
-                cubemap = cls.gfx_device.create_cubemap(target_w, 4)
+                cubemap = cls.gfx_device.create_cubemap_framebuffer(target_w, [4], 4)
                 target = cubemap.get_target()
             else:
                 target = cls.gfx_device.create_mrt_framebuffer(
@@ -341,11 +329,16 @@ class PipelineManager:
         cls._graphs[graph.name] = render_passes
 
     @classmethod
+    def import_resource(cls, name: str, res: Any):
+        cls._imported_resources[name] = res
+
+    @classmethod
     def _initialize_resources(cls):
         position_buffer = UploadManager.get_bindless_buffer("positions").buffer
         normal_buffer = UploadManager.get_bindless_buffer("normals").buffer
         texcoord_buffer = UploadManager.get_bindless_buffer("texcoords").buffer
         indices_buffer = UploadManager.get_bindless_buffer("indices").buffer
+        volume_buffer = UploadManager.get_bindless_buffer("volumes").buffer
         cls.packet_buffer = cls.gfx_device.create_bindless_storage_buffer(4)
 
         cls.light_map_size = (4096, 4096)
@@ -357,19 +350,20 @@ class PipelineManager:
             "sw_UVs": texcoord_buffer,
             "sw_Indices": indices_buffer,
             "sw_RenderObjects": cls.packet_buffer,
+            "sw_Volumes": volume_buffer,
         }
 
-        cam_pos = np.array([0.0, 0.0, 0.0], dtype=np.float32)
-        sun_dir = np.normalize([0, 1, 0]) if hasattr(np, 'normalize') else np.array([0.0, 0.7, 0.7]) / np.linalg.norm([0.0, 0.7, 0.7])
-        sun_intensity = np.array([20.0, 20.0, 20.0], dtype=np.float32)
-        sun_color, ambient_color = calculate_sun_and_ambient(cam_pos, sun_dir, sun_intensity)
+        # cam_pos = np.array([0.0, 0.0, 0.0], dtype=np.float32)
+        # sun_dir = np.normalize([0, 1, 0]) if hasattr(np, 'normalize') else np.array([0.0, 0.7, 0.7]) / np.linalg.norm([0.0, 0.7, 0.7])
+        # sun_intensity = [20.0, 20.0, 20.0]
+        # sun_color, ambient_color = calculate_sun_and_ambient(cam_pos, sun_dir, sun_intensity)
 
         cls._uniform_batch: dict[str, Any] = {
             "sw_View": bytearray(),
             "sw_Projection": bytearray(),
             "sw_NearPlane": bytearray(),
             "sw_FarPlane": bytearray(),
-            "sw_LightColor": struct.pack('3f', *sun_color),
+            # "sw_LightColor": struct.pack('3f', *sun_color),
             "sw_ShadowMapSize": struct.pack('2f', *cls.light_map_size),
             "sw_Radius": struct.pack('1f', .5),
             "sw_Bias": struct.pack('1f', 0.025),
@@ -379,8 +373,11 @@ class PipelineManager:
             "sw_DepthSharpness": struct.pack('1f', 8.0),
             "sw_NormalSharpness": struct.pack('1f', 8.0),
             "sw_AmbientColor": struct.pack('3f', 0.3, 0.3, 0.3),
-            "sw_SunIntensity": struct.pack('3f', *sun_intensity),
+            # "sw_SunIntensity": struct.pack('3f', *sun_intensity),
             "sw_SunDirection": struct.pack('3f', 0, 1, 0),
+            "sw_Exposure": struct.pack('1f', 1.0),
+            # "sw_CubemapMVP": CubemapRenderer._build_mvp_matrices().tobytes(),
+            "sw_CubemapMVP[0]": CubemapRenderer._build_mvp_matrices().tobytes(),
         }
 
         cls._resources: dict[str, RenderTarget] = {}
@@ -390,16 +387,41 @@ class PipelineManager:
         BASE = Path(__file__).parent
         texture_data = ImportManager.load_texture(BASE / "passes" / "ssao" / "noise.png")
         rgb_image = texture_data.source.convert("RGB") # type: ignore
-        texture.upload_pixels(rgb_image.tobytes(), 4, 4) # type: ignore
+        texture.upload_pixels(rgb_image.tobytes(), 0, 0, 4, 4) # type: ignore
         texture.texture.repeat_x = True # type: ignore
         texture.texture.repeat_y = True # type: ignore
         texture.texture.filter = (moderngl.NEAREST, moderngl.NEAREST) # type: ignore
         cls._imported_resources["SSAO_Noise"] = texture
 
-        cls._load_graph(Deffered())
+        # skybox = cls.gfx_device.create_cubemap_framebuffer(512, [4], 4)
+        # # skybox_texture = skybox.get_target().color_attachments[0]
 
-        cls.day_time = 0
-        # cls._load_graph(SkyBox())
+        # face_files = [
+        #     "face_0_pos_x.png", "face_1_neg_x.png", 
+        #     "face_2_pos_y.png", "face_3_neg_y.png", 
+        #     "face_4_pos_z.png", "face_5_neg_z.png"
+        # ]
+
+        # SIZE = 512
+
+        # # 3. Load each image and write directly to its corresponding face
+        # for face_idx, file_path in enumerate(face_files):
+        #     img = Image.open(file_path).convert("RGBA")
+            
+        #     # Ensure image size matches the cubemap dimensions
+        #     if img.size != (SIZE, SIZE):
+        #         img = img.resize((SIZE, SIZE))
+                
+        #     # Extract raw pixel bytes
+        #     pixel_data = img.tobytes()
+            
+        #     # Write to specific face index
+        #     skybox._cubemap.write(face=face_idx, data=pixel_data)
+
+        # cls._imported_resources["bgSkybox"] = skybox._cubemap
+
+        cls._load_graph(Deffered())
+        cls._load_graph(SkyBox())
 
     @staticmethod
     def floats_to_mat4(data: np.ndarray) -> glm.mat4:
@@ -508,7 +530,6 @@ class PipelineManager:
         passes = cls._graphs.get(graph_name)
         if not passes or not views:
             return
-
         prepared_views: list[ViewPreparedData] = []
         for view in views:
             vdata = cls._prepare_view_data(view, passes)
@@ -537,9 +558,10 @@ class PipelineManager:
 
                 vp_width, vp_height = vdata.viewport[2], vdata.viewport[3]
                 
+                inv_view = glm.inverse(vdata.view_matrix) # type: ignore
                 cls.set_uniform_value("sw_View", vdata.view_matrix)
                 cls.set_uniform_value("sw_Projection", vdata.projection_matrix)
-                cls.set_uniform_value("sw_InvView", glm.inverse(vdata.view_matrix)) # type: ignore
+                cls.set_uniform_value("sw_InvView", inv_view) # type: ignore
                 cls.set_uniform_value("sw_InvProjection", glm.inverse(vdata.projection_matrix)) # type: ignore
                 cls.set_uniform_value("sw_Resolution", struct.pack('2f', vp_width, vp_height))
 
@@ -552,16 +574,8 @@ class PipelineManager:
                         light_dir = light.direction
                         cls.set_uniform_value("sw_LightDirection", struct.pack('3f', light_dir.x, light_dir.y, light_dir.z))
 
-                cls.set_uniform_value("sw_CameraPosition", struct.pack('3f', 0, 0, 0)) # type: ignore
-
-                cam_pos = np.array([0.0, 0.0, 0.0], dtype=np.float32)
-                sun_dir = np.array([0, math.cos(cls.day_time), math.sin(cls.day_time)])# if hasattr(np, 'normalize') else np.array([0.0, 0.7, 0.7]) / np.linalg.norm([0.0, 0.7, 0.7])
-                # sun_intensity = np.array([20, 20, 20], dtype=np.float32)
-                sun_color, ambient_color = calculate_sun_and_ambient(cam_pos, sun_dir, struct.unpack("3f", cls.get_uniform_value("sw_SunIntensity")))
-                
-                cls.set_uniform_value("sw_SunDirection", struct.pack('3f', *sun_dir))
-                cls.set_uniform_value("sw_LightColor", struct.pack('3f', *sun_color))
-                cls.set_uniform_value("sw_AmbientColor", struct.pack('3f', ambient_color[0] - 0.02, ambient_color[1] - 0.02, ambient_color[2] - 0.02))
+                cam_pos = inv_view[3].xyz # type: ignore
+                cls.set_uniform_value("sw_CameraPosition", struct.pack('3f', cam_pos.x, cam_pos.y, cam_pos.z)) # type: ignore
 
                 if render_pass.domain == RenderDomain.LIGHT:
                     pass_viewport = (0, 0, cls.light_map_size[0], cls.light_map_size[1])
@@ -573,7 +587,7 @@ class PipelineManager:
 
                 for resource in render_pass.resource_map.values():
                     if resource.is_imported:
-                        cmd.use_texture(cls._imported_resources[resource.source], location=resource.dest_location)
+                        cmd.use_texture(cls._imported_resources.get(resource.source), location=resource.dest_location) # type: ignore
                     else:
                         src_target = vdata.pass_targets[resource.source]
                         cmd.use_target_texture(
@@ -590,15 +604,19 @@ class PipelineManager:
                 cmd.set_resource_set(set_index=0, resource_set=render_pass.resource_set)
 
                 if render_pass.domain in (RenderDomain.SCENE, RenderDomain.LIGHT):
-                    cmd.draw(vertex_count=vdata.max_indices_in_batch, instance_count=vdata.object_count)
+                    cmd.draw(domain="view", vertex_count=vdata.max_indices_in_batch, instance_count=vdata.object_count)
                 elif render_pass.domain == RenderDomain.SCREEN:
-                    cmd.draw(vertex_count=3, instance_count=1)
+                    cmd.draw(domain="view", vertex_count=3, instance_count=1)
                 elif render_pass.domain == RenderDomain.CUBEMAP:
-                    cmd.draw(vertex_count=cls.CUBE_VERTEX_COUNT, instance_count=1)
+                    cmd.draw(domain="cubemap", vertex_count=cls.CUBE_VERTEX_COUNT, instance_count=1)
 
-                if not hasattr(cls, "k") and render_pass.name == "ShadowPass":
-                    cmd.save_image(Path(__file__).parent / "targets" / render_pass.name)
-                    cls.k = 0
+                # if not hasattr(cls, "k"):
+                #     cls.k = 0
+                # if cls.k >= 50 and render_pass.name == "VolumetricFogPass":
+                # if render_pass.name in ["SkyPass", "TonemapPass", "LuminancePass"]:
+                #     cmd.save_image(Path(__file__).parent / "targets" / render_pass.name)
+                #     cls.k = 0
+                # cls.k += 1
 
                 if pass_idx + 1 == total_passes:
                     dest_target = vdata.target if vdata.win_surface is None else vdata.win_surface.render_target
@@ -616,7 +634,7 @@ class PipelineManager:
 
     @classmethod
     def _prepare_cubemap_data(cls, cm: CubeMapBox, passes: list[RenderPass]) -> ViewPreparedData:
-        size = cm.resolution
+        size = cm.resolution # type: ignore
         position = getattr(cm, "position", glm.vec3(0.0))  # type: ignore
 
         vp_matrices_data = bytearray()

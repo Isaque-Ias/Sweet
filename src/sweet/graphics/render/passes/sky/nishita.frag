@@ -1,135 +1,136 @@
-#version 330 core
-
-out vec4 Sky_Out;
-in vec2 v_uv;
-
-// Uniforms
-uniform sampler2D Sky_Light;         // Texture from the previous lighting pass
-uniform sampler2D Sky_Bloom;         // Texture from the previous lighting pass
-uniform mat4 sw_InvView;             // Inverse View Matrix (Camera-to-World)
-uniform mat4 sw_InvProjection;       // Inverse Projection Matrix (Clip-to-View)
+#version 330
+in vec3 v_pos;
+out vec4 fragColor;
 
 uniform vec3 sw_SunDirection;
 uniform vec3 sw_SunIntensity;
 
-const float EARTH_RADIUS = 6371000.0; // 6,371 km
-const float ATM_RADIUS   = 6471000.0; // 6,471 km
-const float HR           = 8000.0;    // Rayleigh scale height (8 km)
-const float HM           = 1200.0;    // Mie scale height (1.2 km)
+const float PI = 3.14159265359;
 
-const float bloomStrength = 0.7;
+const float PLANET_RADIUS     = 6371000.0;
+const float ATMOSPHERE_RADIUS = 6471000.0;
 
-const vec3 BETA_R = vec3(5.8e-6, 1.35e-5, 3.31e-5);
-const vec3 BETA_M = vec3(4.0e-6);
-const float G     = 0.76;
+const vec3  RAYLEIGH_COEFF   = vec3(5.5e-6, 13.0e-6, 22.4e-6);
+const float MIE_COEFF        = 21e-6;
+const float RAYLEIGH_SCALE_H = 8000.0;   // rayleigh density falls off ~e-folding over 8km
+const float MIE_SCALE_H      = 1200.0;   // mie (aerosols) is far more concentrated near ground
+const float MIE_G            = 0.76;     // forward-scattering anisotropy
 
-// Pseudo-random noise generator to dither out banding steps
-float interleaved_gradient_noise(vec2 uv)
-{
-    vec3 magic = vec3(0.06711056, 0.00583715, 52.9829189);
-    return fract(magic.z * fract(dot(uv, magic.xy)));
-}
+const int PRIMARY_STEPS = 32;
+const int LIGHT_STEPS   = 16;
 
 vec2 raySphereIntersect(vec3 ro, vec3 rd, float radius) {
     float b = dot(ro, rd);
     float c = dot(ro, ro) - radius * radius;
-    float d = b * b - c;
-    if (d < 0.0) return vec2(-1.0);
-    return vec2(-b - sqrt(d), -b + sqrt(d));
+    float disc = b * b - c;
+    if (disc < 0.0) return vec2(1e10, -1e10);
+    float s = sqrt(disc);
+    return vec2(-b - s, -b + s);
 }
 
-float densityRayleigh(float h) { return exp(-max(h, 0.0) / HR); }
-float densityMie(float h)      { return exp(-max(h, 0.0) / HM); }
+float rayleighPhase(float cosTheta) {
+    return 3.0 / (16.0 * PI) * (1.0 + cosTheta * cosTheta);
+}
 
-void main() {
-    vec4 sceneColor = texture(Sky_Light, v_uv);
-    vec3 bloomColor = texture(Sky_Bloom, v_uv).rgb;
+float miePhase(float cosTheta, float g) {
+    float g2 = g * g;
+    float num = (1.0 - g2) * (1.0 + cosTheta * cosTheta);
+    float den = (2.0 + g2) * pow(1.0 + g2 - 2.0 * g * cosTheta, 1.5);
+    return (3.0 / (8.0 * PI)) * num / den;
+}
 
-    // If the pixel contains geometry from the lighting pass, keep it
-    if (sceneColor.a >= 0.1) {
-        Sky_Out = sceneColor + vec4(bloomColor * bloomStrength, 1.0);
-        //Sky_Out = sceneColor;
-        return;
+// Accumulated (rayleigh, mie) optical depth from `ro` toward the sun,
+// marching until the ray exits the atmosphere shell.
+void opticalDepthToSun(vec3 ro, vec3 sunDir, out float depthR, out float depthM) {
+    depthR = 0.0;
+    depthM = 0.0;
+
+    vec2 hit = raySphereIntersect(ro, sunDir, ATMOSPHERE_RADIUS);
+    if (hit.x > hit.y) return;
+
+    float rayLen = hit.y;
+    float stepSize = rayLen / float(LIGHT_STEPS);
+    float t = 0.0;
+
+    for (int i = 0; i < LIGHT_STEPS; ++i) {
+        vec3 pos = ro + sunDir * (t + stepSize * 0.5);
+        float height = length(pos) - PLANET_RADIUS;
+
+        if (height < 0.0) {
+            // Sample point is under the horizon relative to the sun ->
+            // the planet itself blocks all light along this path.
+            depthR = 1e10;
+            depthM = 1e10;
+            return;
+        }
+
+        depthR += exp(-height / RAYLEIGH_SCALE_H) * stepSize;
+        depthM += exp(-height / MIE_SCALE_H) * stepSize;
+        t += stepSize;
+    }
+}
+
+vec3 computeScattering(vec3 rayOrigin, vec3 rayDir, vec3 sunDir) {
+    vec2 hit = raySphereIntersect(rayOrigin, rayDir, ATMOSPHERE_RADIUS);
+    if (hit.x > hit.y) return vec3(0.0);
+
+    // Clip the march to the ground if we're looking down at the planet.
+    vec2 groundHit = raySphereIntersect(rayOrigin, rayDir, PLANET_RADIUS);
+    float tMax = hit.y;
+    if (groundHit.x > 0.0 && groundHit.x < tMax) {
+        tMax = groundHit.x;
     }
 
-    // Otherwise, render the Nishita sky on the background/transparent pixels
-    vec3 sw_CameraPosition = sw_InvView[3].xyz;
+    float tMin = max(hit.x, 0.0);
+    float rayLen = tMax - tMin;
+    if (rayLen <= 0.0) return vec3(0.0);
 
-    // Reconstruct world-space ray direction
-    vec4 ndc = vec4(v_uv * 2.0 - 1.0, 1.0, 1.0);
-    vec4 viewRay = sw_InvProjection * ndc;
-    viewRay = viewRay / viewRay.w;
-    vec3 rayDir = normalize(mat3(sw_InvView) * viewRay.xyz);
+    float stepSize = rayLen / float(PRIMARY_STEPS);
 
-    vec3 rayOrigin = sw_CameraPosition + vec3(0.0, EARTH_RADIUS + 1000.0, 0.0);
-
-    vec2 hitAtm = raySphereIntersect(rayOrigin, rayDir, ATM_RADIUS);
-    if (hitAtm.y < 0.0) {
-        Sky_Out = vec4(0.0, 0.0, 0.0, 1.0);
-        return;
-    }
-
-    float tMin = max(hitAtm.x, 0.0);
-    float tMax = hitAtm.y;
-
-    vec2 hitGround = raySphereIntersect(rayOrigin, rayDir, EARTH_RADIUS);
-    if (hitGround.x > 0.0) {
-        tMax = hitGround.x;
-    }
-
-    float cosTheta = dot(rayDir, sw_SunDirection);
-    float phaseR = (3.0 / (16.0 * 3.14159265)) * (1.0 + cosTheta * cosTheta);
-    float phaseM = (3.0 / (8.0 * 3.14159265)) * ((1.0 - G * G) * (1.0 + cosTheta * cosTheta)) / 
-                 ((2.0 + G * G) * pow(1.0 + G * G - 2.0 * G * cosTheta, 1.5));
-
-    // Increased steps for smoother integration gradients
-    const int STEPS = 4;
-    const int LIGHT_STEPS = 2;
-    
-    float totalLength = tMax - tMin;
-    float stepSize = totalLength / float(STEPS);
-    
-    // Apply jitter/dithering based on pixel coordinates to mask low-sample banding
-    float noise = interleaved_gradient_noise(gl_FragCoord.xy);
-    
-    vec3 sumR = vec3(0.0);
-    vec3 sumM = vec3(0.0);
+    vec3 totalRayleigh = vec3(0.0);
+    vec3 totalMie = vec3(0.0);
     float opticalDepthR = 0.0;
     float opticalDepthM = 0.0;
 
-    for (int i = 0; i < STEPS; ++i) {
-        float t = tMin + (float(i) + noise) * stepSize;
-        vec3 samplePos = rayOrigin + rayDir * t;
-        float height = length(samplePos) - EARTH_RADIUS;
+    float cosTheta = dot(rayDir, sunDir);
+    float phaseR = rayleighPhase(cosTheta);
+    float phaseM = miePhase(cosTheta, MIE_G);
 
-        float hr = densityRayleigh(height) * stepSize;
-        float hm = densityMie(height) * stepSize;
+    float t = tMin;
+    for (int i = 0; i < PRIMARY_STEPS; ++i) {
+        vec3 samplePos = rayOrigin + rayDir * (t + stepSize * 0.5);
+        float height = length(samplePos) - PLANET_RADIUS;
+        if (height < 0.0) break;
 
-        opticalDepthR += hr;
-        opticalDepthM += hm;
+        float hR = exp(-height / RAYLEIGH_SCALE_H) * stepSize;
+        float hM = exp(-height / MIE_SCALE_H) * stepSize;
+        opticalDepthR += hR;
+        opticalDepthM += hM;
 
-        vec2 hitSunAtm = raySphereIntersect(samplePos, sw_SunDirection, ATM_RADIUS);
-        float lightStepSize = hitSunAtm.y / float(LIGHT_STEPS);
-        float lightOpticalDepthR = 0.0;
-        float lightOpticalDepthM = 0.0;
+        float lightDepthR, lightDepthM;
+        opticalDepthToSun(samplePos, sunDir, lightDepthR, lightDepthM);
 
-        for (int j = 0; j < LIGHT_STEPS; ++j) {
-            vec3 lightSamplePos = samplePos + sw_SunDirection * ((float(j) + 0.5) * lightStepSize);
-            float lightHeight = length(lightSamplePos) - EARTH_RADIUS;
-            lightOpticalDepthR += densityRayleigh(lightHeight) * lightStepSize;
-            lightOpticalDepthM += densityMie(lightHeight) * lightStepSize;
-        }
-
-        vec3 tau = BETA_R * (opticalDepthR + lightOpticalDepthR) + 
-                   BETA_M * 1.1 * (opticalDepthM + lightOpticalDepthM);
+        vec3 tau = RAYLEIGH_COEFF * (opticalDepthR + lightDepthR)
+                 + (MIE_COEFF * 1.1) * (opticalDepthM + lightDepthM);
         vec3 attenuation = exp(-tau);
 
-        sumR += hr * attenuation;
-        sumM += hm * attenuation;
+        totalRayleigh += attenuation * hR;
+        totalMie      += attenuation * hM;
+
+        t += stepSize;
     }
 
-    vec3 radiance = sw_SunIntensity * (sumR * BETA_R * phaseR + sumM * BETA_M * phaseM);
+    return sw_SunIntensity * (
+        totalRayleigh * RAYLEIGH_COEFF * phaseR +
+        totalMie * MIE_COEFF * phaseM
+    );
+}
 
-    // Output the calculated atmospheric scattering to the background
-    Sky_Out = vec4(radiance, 1.0) + vec4(bloomColor * bloomStrength, 1.0);
+void main() {
+    vec3 rayDir = normalize(v_pos);
+    vec3 rayOrigin = vec3(0.0, PLANET_RADIUS + 1000.0, 0.0);
+
+    vec3 color = computeScattering(rayOrigin, rayDir, normalize(sw_SunDirection));
+
+    fragColor = vec4(color, 1.0);
 }

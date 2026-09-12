@@ -8,6 +8,7 @@ from .common import LayoutInfo
 from ..plataform.hal.manager import GraphicsDevice, VertexLayout, GPUBuffer, GPUShader
 from enum import Enum, auto
 from dataclasses import dataclass
+import ctypes
 if TYPE_CHECKING:
     from ..resources.assets.import_data import MeshData, TextureData, ShaderData
 
@@ -16,6 +17,7 @@ class GPUHandleType(Enum):
     MESH = auto()
     TEXTURE2D = auto()
     TEXTURE3D = auto()
+    VOLUME = auto()
 
 @dataclass
 class GPUView:
@@ -35,6 +37,11 @@ class GPUSource:
     bounding: list[float]
 
 @dataclass
+class GPUVolumeSource:
+    volume_view: GPUView
+    volume_count: int
+
+@dataclass
 class GPUTexture:
     source: GPUView
     format: int
@@ -47,7 +54,23 @@ class GPUHandle:
     key: str
     type: GPUHandleType
 
-import numpy as np
+class _FogVolumeCStruct(ctypes.Structure):
+    _fields_ = [
+        ("invWorldMatrix", ctypes.c_float * 16),
+        ("boundsMin", ctypes.c_float * 3),
+        ("densityScale", ctypes.c_float),
+        ("boundsMax", ctypes.c_float * 3),
+        ("absorption", ctypes.c_float),
+        ("scatteringColor", ctypes.c_float * 4),
+        ("noiseHandle", ctypes.c_uint32 * 2),
+        ("_pad", ctypes.c_uint32 * 2),
+    ]
+
+class _FogBufferHeaderCStruct(ctypes.Structure):
+    _fields_ = [
+        ("u_FogVolumeCount", ctypes.c_uint32),
+        ("_pad", ctypes.c_uint32 * 3),
+    ]
 
 class GPUMemoryTracker:
     def __init__(self, gpu_buffer: GPUBuffer):
@@ -189,7 +212,8 @@ class UploadManager:
         cls._interleaved_buffers = {
             "positions": GPUMemoryTracker(cls._gfx_device.create_bindless_storage_buffer(base_size_mb)),
             "normals": GPUMemoryTracker(cls._gfx_device.create_bindless_storage_buffer(base_size_mb)),
-            "texcoords": GPUMemoryTracker(cls._gfx_device.create_bindless_storage_buffer(base_size_mb))
+            "texcoords": GPUMemoryTracker(cls._gfx_device.create_bindless_storage_buffer(base_size_mb)),
+            "volumes": GPUMemoryTracker(cls._gfx_device.create_bindless_storage_buffer(base_size_mb))
         }
         cls.texture_tracker = GPUMemoryTracker(cls._gfx_device.create_bindless_texture_buffer(base_size_mb * 4))
         cls.ebo_tracker = GPUMemoryTracker(cls._gfx_device.create_bindless_storage_buffer(base_size_mb * 2))
@@ -354,3 +378,46 @@ class UploadManager:
         )
         
         return texture_source
+
+    @classmethod
+    def upload_volumes(cls, volume_configs: list[dict[str, Any]], max_capacity: int = 16) -> GPUVolumeSource:
+        header = _FogBufferHeaderCStruct()
+        header.u_FogVolumeCount = len(volume_configs)
+
+        packed_bytes = bytearray()
+        packed_bytes.extend(bytes(header))
+
+        for config in volume_configs:
+            vol = _FogVolumeCStruct()
+            
+            inv_matrix = config.get("invWorldMatrix", np.identity(4, dtype=np.float32))
+            vol.invWorldMatrix = (ctypes.c_float * 16)(*inv_matrix.flatten())
+            
+            bounds_min = config.get("boundsMin", (-0.5, -0.5, -0.5))
+            vol.boundsMin = (ctypes.c_float * 3)(*bounds_min)
+            vol.densityScale = float(config.get("densityScale", 1.0))
+            
+            bounds_max = config.get("boundsMax", (0.5, 0.5, 0.5))
+            vol.boundsMax = (ctypes.c_float * 3)(*bounds_max)
+            vol.absorption = float(config.get("absorption", 0.1))
+            
+            scattering = config.get("scatteringColor", (1.0, 1.0, 1.0, 1.0))
+            vol.scatteringColor = (ctypes.c_float * 4)(*scattering)
+            
+            noise_handle = config.get("noiseHandle", (0, 0))
+            vol.noiseHandle = (ctypes.c_uint32 * 2)(*noise_handle)
+
+            packed_bytes.extend(bytes(vol))
+
+        # Pad remaining memory block to max_capacity
+        empty_vol = _FogVolumeCStruct()
+        for _ in range(max_capacity - len(volume_configs)):
+            packed_bytes.extend(bytes(empty_vol))
+
+        buffer_tracker = cls._interleaved_buffers["volumes"]
+        idx = buffer_tracker.upload_data(bytes(packed_bytes))
+
+        return GPUVolumeSource(
+            volume_view=GPUView(buffer_index=idx),
+            volume_count=len(volume_configs)
+        )

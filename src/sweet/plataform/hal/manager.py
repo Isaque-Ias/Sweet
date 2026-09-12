@@ -45,7 +45,7 @@ class Introspection:
 
 class Texture2D(ABC):
     @abstractmethod
-    def upload_pixels(self, data: Any, width: int, height: int):
+    def upload_pixels(self, data: Any, x: int = 0, y: int = 0, width: Optional[int] = None, height: Optional[int] = None):
         pass
 
     @abstractmethod
@@ -142,7 +142,17 @@ class RenderTarget(ABC):
         pass
 
     @abstractmethod
-    def clear(self, color: tuple[float, float, float, float] = (0.0, 0.0, 0.0, 1.0), depth: float = 1.0) -> None:
+    def clear(self, color: tuple[float, float, float] = (0.0, 0.0, 0.0), depth: float = 1.0) -> None:
+        pass
+
+    @property
+    @abstractmethod
+    def color_attachments(self) -> list[Any]:
+        pass
+
+    @property
+    @abstractmethod
+    def depth_attachment(self) -> Optional[Any]:
         pass
 
     @abstractmethod
@@ -212,7 +222,7 @@ class CommandBuffer(ABC):
     def set_uniform_value(self, uniform: str, value: Any): ...
 
     @abstractmethod
-    def draw(self, vertex_count: int, instance_count: int = 1, first_vertex: int = 0, first_instance: int = 0) -> None: ...
+    def draw(self, domain: str, vertex_count: int, instance_count: int = 1, first_vertex: int = 0, first_instance: int = 0) -> None: ...
 
     @abstractmethod
     def redirect(self, dst_target: RenderTarget, src_attachment: int | str, dst_attachment: int | str) -> None: ...
@@ -249,7 +259,7 @@ class GraphicsDevice(ABC):
         pass
 
     @abstractmethod
-    def create_mrt_framebuffer(self, width: int, height: int, color_formats: list[int] | list[Texture2D], has_depth: bool = True) -> RenderTarget:
+    def create_mrt_framebuffer(self, width: int, height: int, color_formats: list[int] | list[Texture2D], has_depth: bool = True, dtype: str = "f1") -> RenderTarget:
         pass
 
     @abstractmethod
@@ -277,7 +287,7 @@ class GraphicsDevice(ABC):
         pass
 
     @abstractmethod
-    def create_cubemap(self, size: int, components: int) -> Cubemap:
+    def create_cubemap_framebuffer(self, size: int, color_formats: list[int], components: int, dtype: str = "f1") -> Cubemap:
         pass
 
     @abstractmethod
