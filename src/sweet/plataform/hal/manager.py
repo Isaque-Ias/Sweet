@@ -49,6 +49,14 @@ class Texture2D(ABC):
         pass
 
     @abstractmethod
+    def build_mipmaps(self, base: int = 0, max_level: int = 1000) -> None:
+        pass
+
+    @abstractmethod
+    def set_filters(self, min_filter: Any, mag_filter: Any) -> None:
+        pass
+
+    @abstractmethod
     def release(self):
         pass
 
@@ -155,6 +163,8 @@ class RenderTarget(ABC):
     def depth_attachment(self) -> Optional[Any]:
         pass
 
+    def get_color_texture(self, index: int) -> Texture2D: ...
+
     @abstractmethod
     def native_handle(self) -> Any:
         pass
@@ -162,7 +172,13 @@ class RenderTarget(ABC):
     @abstractmethod
     def release(self) -> None:
         pass
- 
+
+class ArrayFramebuffer(ABC):
+    @abstractmethod
+    def get_target(self) -> RenderTarget: ...
+
+    @abstractmethod
+    def release(self) -> None: ...
 
 class VertexLayout(ABC):
     @abstractmethod
@@ -216,7 +232,7 @@ class CommandBuffer(ABC):
     def use_texture(self, src_texture: Texture2D, location: int): ...
 
     @abstractmethod
-    def use_target_texture(self, src_render_target: RenderTarget, src_attachment: int, location: int): ...
+    def use_target_texture(self, src_render_target: RenderTarget, src_attachment: int, location: int, src_mip: int): ...
 
     @abstractmethod
     def set_uniform_value(self, uniform: str, value: Any): ...
@@ -341,6 +357,9 @@ class GraphicsDevice(ABC):
     @abstractmethod
     def submit(self, command_buffers: list[CommandBuffer]) -> None:
         pass
+
+    @abstractmethod
+    def create_array_framebuffer(self, width: int, height: int, layers: int, dtype: str = "f2", depth_only: bool = True) -> ArrayFramebuffer: ...
 
     @abstractmethod
     def shutdown(self):

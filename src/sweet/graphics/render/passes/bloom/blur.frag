@@ -10,7 +10,7 @@ void main() {
     float totalWeight = 0.0;
     
     // A 5x5 neighborhood search (25 samples total)
-    int radius = 3;
+    int radius = 2;
     float spread = 4.0; // Increase this to make the blur wider
 
     // Approximate screen resolution scaling (or pass resolution as a uniform)

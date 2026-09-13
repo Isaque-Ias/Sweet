@@ -1,6 +1,7 @@
 import math
 import sweet as sw
 from sweet.core.linalg.vector import Vec3
+import struct
 
 sw.Engine.initialize(
     graphics_device=sw.GraphicsDevice.MODERNGL,
@@ -45,7 +46,7 @@ class Player(sw.GameModel):
 
         self.win = win
         self.speed = .1
-        self.k = 0.025
+        self.k = 12
         self.acc = 1
 
     def main(self):
@@ -77,9 +78,11 @@ class Player(sw.GameModel):
 
         if self.win.input.is_key_held(sw.Key.F):
             self.k += 0.01
+            skbx.update(time=self.k * 1000)
 
         if self.win.input.is_key_held(sw.Key.G):
             self.k -= 0.01
+            skbx.update(time=self.k * 1000)
 
         if self.win.input.is_key_held(sw.Key.Y):
             self.acc *= 1.1
@@ -87,21 +90,25 @@ class Player(sw.GameModel):
         if self.win.input.is_key_held(sw.Key.U):
             self.acc *= .9
 
-        # if self.win.input.is_key_held(sw.Key.V):
-        #     light.near *= 1.1
-        #     print(light.near)
+        if self.win.input.is_key_held(sw.Key.V):
+            light.near -= 0.01
+            light.near = max(0, light.near)
+            sw.graphics.render.process.PipelineManager.set_uniform_value("sw_Metallic", struct.pack("1f", light.near))
 
-        # if self.win.input.is_key_held(sw.Key.B):
-        #     light.near *= .9
-        #     print(light.near)
+        if self.win.input.is_key_held(sw.Key.B):
+            light.near += 0.01
+            light.near = min(1, light.near)
+            sw.graphics.render.process.PipelineManager.set_uniform_value("sw_Metallic", struct.pack("1f", light.near))
 
-        # if self.win.input.is_key_held(sw.Key.N):
-        #     light.far *= 1.1
-        #     print(light.far, "far")
+        if self.win.input.is_key_held(sw.Key.N):
+            light.far -= 0.01
+            light.far = max(0, light.far)
+            sw.graphics.render.process.PipelineManager.set_uniform_value("sw_Roughness", struct.pack("1f", light.far))
 
-        # if self.win.input.is_key_held(sw.Key.M):
-        #     light.far *= .9
-        #     print(light.far, "far")
+        if self.win.input.is_key_held(sw.Key.M):
+            light.far += 0.01
+            light.far = min(1, light.far)
+            sw.graphics.render.process.PipelineManager.set_uniform_value("sw_Roughness", struct.pack("1f", light.far))
 
         if self.win.input.is_key_held(sw.Key.LEFT_SHIFT):
             self.node.position = Vec3(
@@ -148,7 +155,7 @@ scene.add_entity(new_p1)
 # print(cb.get_target())
 skbx = sw.gameplay.skybox.NishitaSkyBox()
 scene.skybox = skbx
-skbx.update(time=9000)
+skbx.update(time=18000)
 
 # dummy_volume_configs = [
 #     # {

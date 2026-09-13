@@ -1,18 +1,44 @@
 from sweet.graphics.upload import GPUShader
-from typing import Optional, NamedTuple
+from typing import Optional, NamedTuple, Any
 from ....resources.assets.importer import ImportManager
 from ...upload import UploadManager
 from pathlib import Path
 from collections import defaultdict, deque
-from enum import Enum, auto
+from enum import Enum, auto, IntEnum
+from dataclasses import dataclass
+
+class MipSelect(IntEnum):
+    BASE = 0
+    LOWEST = -1
+
+@dataclass(frozen=True)
+class SourceRef:
+    output: str
+    shader: Any
+    mip: int | MipSelect = MipSelect.BASE
 
 class RenderDomain(Enum):
     SCREEN = auto()
     SCENE = auto()
     LIGHT = auto()
+    CASCADE = auto()
     CAMERA = auto()
     PROBE = auto()
     CUBEMAP = auto()
+
+@dataclass
+class PassConfig:
+    hdr: bool = True                     # f2 (half-float) vs u1 (8-bit) attachments
+    depth_texture: bool = False          # expose depth as a sampleable attachment
+    cull_mode: str = "back"
+    depth_test: bool = True
+    depth_write: bool = True
+    depth_compare_op: str = "less_equal"
+    mip_levels: int = 1                  # 1 = no mip chain, 0 = full chain
+    shadow_cascades: int = 1             # >1 => CSM array target + per-cascade draws
+    ping_pong: bool = False              # e.g. bloom blur
+    ping_pong_iterations: int = 1
+    domain: RenderDomain = RenderDomain.SCENE
 
 class Graph:
     graph: "RenderGraph"
@@ -51,15 +77,17 @@ class ResourceLifetime:
         return not (self.last_pass < other.first_pass or self.first_pass > other.last_pass)
 
 class RenderShader:
-    def __init__(self, name: str, program: Optional[GPUShader] = None, domain: RenderDomain = RenderDomain.SCENE):
+    def __init__(self, name: str, program: Optional[GPUShader] = None, config: Optional[PassConfig] = None):
         self.name: str = name
         self.program: Optional[GPUShader] = program
         self.inputs: set[str] = set()
         self.outputs: set[str] = set()
-        self.dependencies: dict[str, tuple[str, "RenderShader"]] = {}
+        self.dependencies: dict[str, tuple[str, "RenderShader", Any]] = {}
         self._redirect: dict[str, tuple[str, "RenderShader"]] = {}
         self.is_culled: bool = True
-        self.domain = domain
+        if config is None:
+            config = PassConfig()
+        self.config = config
 
     def add_input(self, resource_name: str) -> "RenderShader":
         self.inputs.add(resource_name)
@@ -70,15 +98,15 @@ class RenderShader:
         return self
 
     def connect_input(
-        self, producer_output_res: str, producer_shader: "RenderShader", input_res: str
+        self, producer_output_res: str, producer_shader: "RenderShader", input_res: str, mip: Optional[MipSelect] = None
     ) -> None:
         self.inputs.add(input_res)
         producer_shader.outputs.add(producer_output_res)
-        self.dependencies[producer_output_res] = (input_res, producer_shader)
+        self.dependencies[producer_output_res] = (input_res, producer_shader, mip) # type: ignore
 
     def resolve_redirections(self) -> None:
         self._redirect.clear()
-        for input_res, (producer_attr, producer_shader) in self.dependencies.items():
+        for input_res, (producer_attr, producer_shader, _) in self.dependencies.items(): # type: ignore
             if not producer_shader.is_culled:
                 self._redirect[input_res] = (producer_attr, producer_shader)
 
@@ -256,27 +284,3 @@ class RenderGraph:
                     initial_map.setdefault(input_res, []).append(shader.name)
 
         return initial_map
-
-    # def print_memory_plan(self) -> None:
-    #     """Displays execution order, resource lifetimes, and aliased memory layout."""
-    #     print("=== EXECUTION TIMELINE ===")
-    #     for idx, shader in enumerate(self.active_passes):
-    #         print(f" Pass {idx}: [{shader.name}]")
-
-    #     print("\n=== RESOURCE LIFETIMES & ALIASED OFFSETS ===")
-    #     raw_sum = 0
-    #     for name, life in self.lifetimes.items():
-    #         if life.desc.is_imported:
-    #             print(f" Resource '{name}': Persistent (Imported)")
-    #             continue
-
-    #         raw_sum += life.desc.size_bytes
-    #         size_mb = life.desc.size_bytes / (1024 * 1024)
-    #         offset_mb = life.memory_offset / (1024 * 1024)
-    #         print(
-    #             f" Resource '{name}': Lifetime = Pass [{life.first_pass}..{life.last_pass}] "
-    #             f"| Size = {size_mb:.1f} MB | Heap Offset = {offset_mb:.1f} MB"
-    #         )
-
-    #     print(f"\nTotal Unaliased Size : {raw_sum / (1024 * 1024):.1f} MB")
-    #     print(f"Aliased Heap Required: {self.total_transient_heap_size / (1024 * 1024):.1f} MB")

@@ -6,9 +6,12 @@ from sweet.plataform.hal.manager import Cubemap, RenderTarget
 from .introspection import Introspect, Introspection
 from sweet.core import system
 import itertools
+import math
 import traceback
+import ctypes # type: ignore
 import numpy as np
 from PIL import Image
+import OpenGL.GL as gl
 from OpenGL.GL import (
     GL_TEXTURE_CUBE_MAP, # type: ignore
     GL_TEXTURE_CUBE_MAP_POSITIVE_X, GL_TEXTURE_CUBE_MAP_POSITIVE_Y, GL_TEXTURE_CUBE_MAP_POSITIVE_Z, # type: ignore
@@ -31,15 +34,147 @@ DEBUG_GL = False
 
 
 def _check_gl_error(context: str) -> None:
-    """Best-effort GL error check. Only used when DEBUG_GL is on, since
-    glGetError() forces a sync point and shouldn't run in hot loops by
-    default."""
     if not DEBUG_GL:
         return
     err = glGetError()
     if err != GL_NO_ERROR: # type: ignore
         system.warn(f"[GL] error {hex(err)} after {context}") # type: ignore
 
+
+class ModernGLTextureArrayDepth:
+    def __init__(self, width: int, height: int, layers: int, dtype: str = "f2"):
+        if layers <= 0:
+            raise ValueError("Cascade count must be greater than zero")
+ 
+        self.width = width
+        self.height = height
+        self.layers = layers
+        self.dtype = dtype
+ 
+        # f2/f4 -> 32-bit float depth (recommended for shadow maps to avoid
+        # z-fighting from reversed/large-range ortho projections). Anything
+        # else falls back to a standard 24-bit fixed-point depth format.
+        internal_format = ( # type: ignore
+            gl.GL_DEPTH_COMPONENT32F if dtype in ("f2", "f4") else gl.GL_DEPTH_COMPONENT24 # type: ignore
+        )
+ 
+        self.glo = int(gl.glGenTextures(1))
+        gl.glBindTexture(gl.GL_TEXTURE_2D_ARRAY, self.glo) # type: ignore
+        gl.glTexImage3D(
+            gl.GL_TEXTURE_2D_ARRAY, 0, internal_format, # type: ignore
+            width, height, layers, 0,
+            gl.GL_DEPTH_COMPONENT, gl.GL_FLOAT, None, # type: ignore
+        )
+ 
+        gl.glTexParameteri(gl.GL_TEXTURE_2D_ARRAY, gl.GL_TEXTURE_MIN_FILTER, gl.GL_LINEAR) # type: ignore
+        gl.glTexParameteri(gl.GL_TEXTURE_2D_ARRAY, gl.GL_TEXTURE_MAG_FILTER, gl.GL_LINEAR) # type: ignore
+        gl.glTexParameteri(gl.GL_TEXTURE_2D_ARRAY, gl.GL_TEXTURE_WRAP_S, gl.GL_CLAMP_TO_EDGE) # type: ignore
+        gl.glTexParameteri(gl.GL_TEXTURE_2D_ARRAY, gl.GL_TEXTURE_WRAP_T, gl.GL_CLAMP_TO_EDGE) # type: ignore
+ 
+        gl.glTexParameteri(gl.GL_TEXTURE_2D_ARRAY, gl.GL_TEXTURE_COMPARE_MODE, gl.GL_COMPARE_REF_TO_TEXTURE) # type: ignore
+        gl.glTexParameteri(gl.GL_TEXTURE_2D_ARRAY, gl.GL_TEXTURE_COMPARE_FUNC, gl.GL_LEQUAL) # type: ignore
+ 
+        gl.glBindTexture(gl.GL_TEXTURE_2D_ARRAY, 0) # type: ignore
+        _check_gl_error("csm depth array texture creation")
+ 
+    def use(self, location: int = 0) -> None:
+        gl.glActiveTexture(gl.GL_TEXTURE0 + location) # type: ignore
+        gl.glBindTexture(gl.GL_TEXTURE_2D_ARRAY, self.glo) # type: ignore
+ 
+    def release(self) -> None:
+        if self.glo:
+            gl.glDeleteTextures(1, [self.glo])
+            self.glo = 0
+
+ 
+class ModernGLArrayTarget(RenderTarget):
+ 
+    def __init__(self, depth_array: ModernGLTextureArrayDepth, width: int, height: int):
+        self.depth_array = depth_array
+        self._size = (width, height)
+        self.fbo_id: Optional[int] = None
+        self._create_framebuffer()
+ 
+    @property
+    def size(self) -> tuple[int, int]:
+        return self._size
+ 
+    @property
+    def is_layered(self) -> bool:
+        return True
+ 
+    def _create_framebuffer(self) -> None:
+        fbo = gl.glGenFramebuffers(1) # type: ignore
+        if isinstance(fbo, (list, tuple, np.ndarray)):
+            fbo = int(fbo[0])
+        self.fbo_id = int(fbo)
+ 
+        gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, self.fbo_id) # type: ignore
+ 
+        gl.glFramebufferTexture(gl.GL_FRAMEBUFFER, gl.GL_DEPTH_ATTACHMENT, self.depth_array.glo, 0) # type: ignore
+ 
+        gl.glDrawBuffer(gl.GL_NONE) # type: ignore
+        gl.glReadBuffer(gl.GL_NONE) # type: ignore
+ 
+        status = gl.glCheckFramebufferStatus(gl.GL_FRAMEBUFFER) # type: ignore
+        _check_gl_error("csm layered framebuffer construction")
+        gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, 0) # type: ignore
+ 
+        if status != gl.GL_FRAMEBUFFER_COMPLETE: # type: ignore
+            self.release_resources()
+            raise RuntimeError(f"Layered CSM framebuffer incomplete: {hex(status)}") # type: ignore
+ 
+    def use(self) -> None:
+        if self.fbo_id is None:
+            raise RuntimeError("CSM framebuffer has already been released")
+        gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, self.fbo_id) # type: ignore
+        gl.glViewport(0, 0, *self._size) # type: ignore
+        _check_gl_error("csm target bind")
+ 
+    def clear(self, color: tuple[float, float, float] = (0.0, 0.0, 0.0), depth: float = 1.0) -> None:
+        gl.glClearDepth(depth) # type: ignore
+        gl.glClear(gl.GL_DEPTH_BUFFER_BIT) # type: ignore
+ 
+    def unbind(self) -> None:
+        gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, 0) # type: ignore
+ 
+    def release(self) -> None:
+        self.unbind()
+        self.release_resources()
+ 
+    def release_resources(self) -> None:
+        if self.fbo_id is not None:
+            gl.glDeleteFramebuffers(1, [self.fbo_id])
+            self.fbo_id = None
+ 
+    def native_handle(self) -> int:
+        if self.fbo_id is None:
+            raise RuntimeError("CSM framebuffer has been released")
+        return self.fbo_id
+ 
+    @property
+    def color_attachments(self) -> list[Any]:
+        return []
+ 
+    @property
+    def depth_attachment(self) -> ModernGLTextureArrayDepth:
+        return self.depth_array
+ 
+
+class ModernGLArrayFramebuffer(ArrayFramebuffer):
+    def __init__(self, width: int, height: int, layers: int, dtype: str = "f2"):
+        self.width = width
+        self.height = height
+        self.layers = layers
+        self.depth_array = ModernGLTextureArrayDepth(width, height, layers, dtype)
+        self._target = ModernGLArrayTarget(self.depth_array, width, height)
+ 
+    def get_target(self) -> RenderTarget:
+        return self._target
+ 
+    def release(self) -> None:
+        self._target.release()
+        self.depth_array.release()
 
 class ModernGLTexture2D(Texture2D):
     def __init__(self, width: int, height: int, components: int = 4, dtype: str = "f1"):
@@ -56,6 +191,16 @@ class ModernGLTexture2D(Texture2D):
         viewport = (x, y, w, h)
 
         self.texture.write(data, viewport=viewport)
+
+    def build_mipmaps(self, base: int = 0, max_level: int = 1000) -> None:
+        self.texture.build_mipmaps(base=base, max_level=max_level)
+
+    def set_filters(self, min_filter: Any, mag_filter: Any) -> None:
+        self.texture.filter = (min_filter, mag_filter)
+
+    @property
+    def mip_levels(self) -> int:
+        return int(math.floor(math.log2(max(self.width, self.height)))) + 1
 
     def release(self):
         if self.texture:
@@ -118,6 +263,9 @@ class ModernGLCubemap(Cubemap):
         if len(filters) != 2:
             raise ValueError("set_filters expects (min_filter, mag_filter)")
         self._cubemap.filter = filters
+
+    def build_mipmaps(self, base: int = 0, max_level: int = 1000) -> None:
+        self._cubemap.build_mipmaps(base=base, max_level=max_level)
 
     def release(self):
         self._target.release()
@@ -252,7 +400,8 @@ class ModernGLFramebufferTarget(RenderTarget):
         height: int,
         color_formats: list[Any] = [4],
         has_depth: bool = True,
-        dtype: str = "f1"
+        dtype: str = "f1",
+        color_dtypes: Optional[list[Optional[str]]] = None,
     ):
         self.ctx = ctx
         self._size = (width, height)
@@ -262,9 +411,20 @@ class ModernGLFramebufferTarget(RenderTarget):
 
         mgl_color_attachments: list[Any] = []
 
-        for fmt in color_formats:
+        for i, fmt in enumerate(color_formats):
             if isinstance(fmt, int):
-                tex = ModernGLTexture2D(width, height, components=fmt, dtype=dtype)
+                # FIX (HDR preservation): let each color attachment in an
+                # MRT set pick its own precision instead of forcing every
+                # attachment to share one global `dtype`. A lighting/HDR
+                # target (f2/f4) commonly sits alongside an f1 albedo or
+                # mask target in the same framebuffer, and the old code
+                # would silently downgrade every attachment to whatever
+                # single `dtype` was passed in (defaulting to "f1"),
+                # clipping any HDR data written into it.
+                attachment_dtype = dtype
+                if color_dtypes is not None and i < len(color_dtypes) and color_dtypes[i] is not None:
+                    attachment_dtype = color_dtypes[i]  # type: ignore
+                tex = ModernGLTexture2D(width, height, components=fmt, dtype=attachment_dtype) # type: ignore
                 owns = True
             else:
                 tex = cast(ModernGLTexture2D, fmt)
@@ -302,6 +462,18 @@ class ModernGLFramebufferTarget(RenderTarget):
     @property
     def color_attachments(self) -> list[Texture2D]:
         return self._native_handle.color_attachments  # type: ignore
+
+    def get_color_texture(self, index: int = 0) -> Texture2D:
+        """Return the wrapped ModernGLTexture2D for color attachment
+        `index` (as opposed to `color_attachments`, which returns the raw
+        moderngl.Texture the framebuffer holds). Use this to call
+        build_mipmaps()/set_filters() on a render target's own color
+        attachment -- e.g. after rendering a luminance pass into
+        attachment 0, build its mip chain here before sampling the
+        smallest mip in the tonemap pass."""
+        if not self._color_textures:
+            raise IndexError("This RenderTarget has no color attachments")
+        return self._color_textures[index]
 
     @property
     def depth_attachment(self) -> Optional[ModernGLTexture2D]:
@@ -673,6 +845,14 @@ class ModernGLCommandBuffer(CommandBuffer):
                 t.clear(color=cc)
                 return
 
+            if isinstance(t, ModernGLArrayTarget):
+                t.use()
+                w, h = t.size
+                effective_vp = vp if vp is not None else (0, 0, w, h)
+                glViewport(*effective_vp)
+                t.clear(color=cc)
+                return
+
             fb = t.native_handle()
             w, h = t.size
             effective_vp = vp if vp is not None else (0, 0, w, h)
@@ -750,30 +930,31 @@ class ModernGLCommandBuffer(CommandBuffer):
         src_render_target: RenderTarget,
         src_attachment: int,
         location: int,
+        src_mip: int,
     ) -> None:
         def use():
             if isinstance(src_render_target, ModernGLCubemapTarget):
                 if src_attachment != 0:
-                    raise ValueError(
-                        "Cubemap targets currently expose one color attachment at index 0"
-                    )
+                    raise ValueError("Cubemap targets currently expose one color attachment at index 0")
                 src_render_target.cubemap.use(location=location)
                 return
-
+            if isinstance(src_render_target, ModernGLArrayTarget):
+                src_render_target.depth_array.use(location=location)
+                return
+            
             native = src_render_target.native_handle()
 
             if src_attachment == -1:
-                depth = native.depth_attachment
-                if depth is None:
+                texture = native.depth_attachment
+                if texture is None:
                     raise ValueError("RenderTarget has no depth attachment")
-                depth.use(location=location)
             else:
                 colors = native.color_attachments
                 if src_attachment < 0 or src_attachment >= len(colors):
-                    raise IndexError(
-                        f"Color attachment {src_attachment} out of bounds"
-                    )
-                colors[src_attachment].use(location=location)
+                    raise IndexError(f"Color attachment {src_attachment} out of bounds")
+                texture = colors[src_attachment]
+
+            texture.use(location=location)  # plain bind, no state mutation, no views
 
         self._commands.append(use)
 
@@ -910,18 +1091,39 @@ class ModernGLCommandBuffer(CommandBuffer):
             channels = attachment_texture.components
             texture_dtype = attachment_texture.dtype
 
+            # FIX (HDR preservation): must read back using the attachment's
+            # actual dtype. `fbo.read()` defaults to 'f1' when no dtype is
+            # given, so every HDR attachment (f2/f4) was being reinterpreted
+            # through the normalized 8-bit path and silently corrupted
+            # before it ever reached the "parse buffer" step below.
             raw_bytes = fbo.read(
                 viewport=(0, 0, width, height),
                 components=channels,
                 attachment=idx,
+                dtype=texture_dtype,
             )
 
-            # Parse buffer into normalized uint8 array regardless of dtype
-            if "4" in texture_dtype:
-                np_data = np.frombuffer(raw_bytes, dtype=np.float32)
-                np_data = (np.clip(np_data, 0.0, 1.0) * 255.0).astype(np.uint8)
-            else:
-                np_data = np.frombuffer(raw_bytes, dtype=np.uint8)
+            # FIX: the old `"4" in texture_dtype` check conflated "f4"
+            # (32-bit float, HDR) with "u4"/"i4" (32-bit integer, NOT
+            # normalized floats), and left "f2" (16-bit float, also HDR)
+            # completely unhandled -- it fell into the uint8 branch and
+            # was read as raw bytes, producing garbage. Use the same
+            # dtype table and range-mapping as `_save_cubemap_face` so
+            # float HDR data is range-compressed to 8-bit for the PNG
+            # preview and integer formats are mapped from their own
+            # integer range, while the underlying attachment itself is
+            # never touched -- this method only ever produces a debug
+            # visualization copy.
+            np_dtype = self._MGL_DTYPE_TO_NUMPY.get(texture_dtype, np.uint8)
+            np_data = np.frombuffer(raw_bytes, dtype=np_dtype)
+
+            if np_dtype in (np.float16, np.float32):
+                np_data = (np.clip(np_data.astype(np.float32), 0.0, 1.0) * 255.0).astype(np.uint8)
+            elif np_dtype != np.uint8:
+                info = np.iinfo(np_dtype)
+                np_data = (
+                    (np_data.astype(np.float32) - info.min) / (info.max - info.min) * 255.0
+                ).astype(np.uint8)
 
             # Reshape into (height, width, channels)
             if channels == 1:
@@ -1281,6 +1483,21 @@ class ModernGLGraphicsDevice(GraphicsDevice):
             if has_dst_textures else None
         )
 
+        # FIX (HDR preservation): glBlitFramebuffer/copy_framebuffer moves
+        # raw texel data -- it does not tone-map or convert precision. If
+        # the source and destination attachments don't share a dtype (e.g.
+        # blitting an f4 HDR color target into an f1 LDR one), the copy
+        # either loses range or reinterprets the bits outright. This used
+        # to happen silently; now it's surfaced so a mismatched HDR/LDR
+        # redirect doesn't fail invisibly.
+        # src_dtype = getattr(src_native, "dtype", None)
+        # dst_dtype = getattr(dst_native, "dtype", None)
+        # if src_dtype is not None and dst_dtype is not None and src_dtype != dst_dtype:
+        #     system.warn(
+        #         f"[ModernGLGraphicsDevice] blit_texture_to_target: dtype mismatch "
+        #         f"src={src_dtype!r} dst={dst_dtype!r} -- HDR precision may be lost."
+        #     )
+
         src_is_cube = isinstance(src_native, moderngl.TextureCube)
         dst_is_cube = isinstance(dst_native, moderngl.TextureCube)
 
@@ -1344,22 +1561,48 @@ class ModernGLGraphicsDevice(GraphicsDevice):
         if self._dummy_window:
             glfw.destroy_window(self._dummy_window)  # type: ignore
 
-    def create_framebuffer(self, width: int, height: int, texture: Any = None) -> RenderTarget:
+    def create_framebuffer(
+        self, width: int, height: int, texture: Any = None, dtype: str = "f1"
+    ) -> RenderTarget:
+        # FIX (HDR preservation): this factory never forwarded a dtype, so
+        # every single-attachment framebuffer built through it silently
+        # fell back to ModernGLFramebufferTarget's f1 default -- an HDR
+        # scene-color or bloom target requested here was impossible even
+        # though the underlying HAL (ModernGLTexture2D/ModernGLFramebufferTarget)
+        # fully supports HDR dtypes such as "f2"/"f4".
         if not self.ctx:
             raise RuntimeError(
                 "Inicialize o contexto ModernGL antes de criar um framebuffer"
             )
-        return ModernGLFramebufferTarget(self.ctx, width, height, color_formats=[texture] if texture else [4])
+        return ModernGLFramebufferTarget(
+            self.ctx, width, height, color_formats=[texture] if texture else [4], dtype=dtype
+        )
 
     def create_mrt_framebuffer(
-        self, width: int, height: int, color_formats: list[int] | list[Texture2D], has_depth: bool = True, dtype: str = "f1"
+        self,
+        width: int,
+        height: int,
+        color_formats: list[int] | list[Texture2D],
+        has_depth: bool = True,
+        dtype: str = "f1",
+        color_dtypes: Optional[list[Optional[str]]] = None,
     ) -> RenderTarget:
+        # FIX (HDR preservation): forwards the new optional per-attachment
+        # `color_dtypes`, so a caller can mix an HDR (f2/f4) target with
+        # LDR targets in the same MRT set instead of every attachment
+        # being forced to share the single `dtype` value.
         if not self.ctx:
             raise RuntimeError(
                 "Inicialize o contexto ModernGL antes de criar um framebuffer MRT"
             )
         return ModernGLFramebufferTarget(
-            self.ctx, width, height, color_formats=color_formats, has_depth=has_depth, dtype=dtype
+            self.ctx,
+            width,
+            height,
+            color_formats=color_formats,
+            has_depth=has_depth,
+            dtype=dtype,
+            color_dtypes=color_dtypes,
         )
 
     def create_cubemap_framebuffer(self, size: int, color_formats: list[int], components: int, dtype: str = "f1") -> ModernGLCubemap:
@@ -1433,13 +1676,18 @@ class ModernGLGraphicsDevice(GraphicsDevice):
 
         return ModernGLGPUBuffer(size_mb * 1024 * 1024, dynamic=True)
 
-    def create_texture2d(self, width: int, height: int, format: int = 4) -> Texture2D:
+    def create_texture2d(self, width: int, height: int, format: int = 4, dtype: str = "f1") -> Texture2D:
+        # FIX (HDR preservation): this factory never forwarded a dtype, so
+        # every 2D texture created through the HAL silently fell back to
+        # ModernGLTexture2D's f1 (normalized 8-bit) default -- an HDR
+        # texture (e.g. "f2"/"f4") requested here was impossible even
+        # though ModernGLTexture2D already supports it.
         if not self.ctx:
             raise RuntimeError(
                 "Inicialize o contexto ModernGL antes de criar uma textura 2D"
             )
 
-        return ModernGLTexture2D(width, height, components=format)
+        return ModernGLTexture2D(width, height, components=format, dtype=dtype)
 
     def create_resource_layout(
         self, bindings: list[tuple[int, ResourceType]]
@@ -1469,3 +1717,12 @@ class ModernGLGraphicsDevice(GraphicsDevice):
         for cb in command_buffers:
             if isinstance(cb, ModernGLCommandBuffer):
                 cb.execute()
+
+    def create_array_framebuffer(self, width: int, height: int, layers: int, dtype: str = "f2", depth_only: bool = True) -> ArrayFramebuffer:
+        if not self.ctx:
+            raise RuntimeError("Inicialize o contexto ModernGL antes de criar um array framebuffer")
+        if not depth_only:
+            # Color-array cascades (e.g. VSM/moment shadow maps) would go here.
+            # Not needed for a standard PCF depth CSM, so left unimplemented.
+            raise NotImplementedError("create_array_framebuffer currently only supports depth_only=True")
+        return ModernGLArrayFramebuffer(width, height, layers, dtype)

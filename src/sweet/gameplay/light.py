@@ -13,8 +13,8 @@ class Light:
         self.direction = direction.normalize()
         self.position = Vec3(0, 0, 0)
         self.fov = 90
-        self.near = .1
-        self.far = 100
+        self.near = 1
+        self.far = 2000
 
     def get_view(self):
         dir_glm = glm.vec3(self.direction.x, self.direction.y, self.direction.z)
@@ -36,5 +36,5 @@ class Light:
 
     def get_projection(self):
         if self.type == LightType.POINT:
-            # return glm.ortho(-200.0, 200.0, -200.0, 200.0, -10.0, 120.0)#glm.perspective(self.fov * 3.1415 / 180, 1, 1, 100) # type: ignore
-            return glm.perspective(self.fov * 3.1415 / 180, 1, self.near, self.far) # type: ignore
+            return glm.ortho(-200.0, 200.0, -200.0, 200.0, -10.0, 250.0)#glm.perspective(self.fov * 3.1415 / 180, 1, 1, 100) # type: ignore
+            # return glm.perspective(self.fov * 3.1415 / 180, 1, self.near, self.far) # type: ignore

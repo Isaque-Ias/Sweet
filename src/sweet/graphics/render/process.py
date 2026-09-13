@@ -1,49 +1,47 @@
 from __future__ import annotations
-
 from sweet.plataform.display.window.window import WindowSurface
 from ..upload import UploadManager, GPUMeshSource
 from sweet.resources.assets.importer import ImportManager
 from ...plataform.hal.manager import *
-import math
+import moderngl
 from .visibility.frustum import FrustumCulling
 from .graph.families.surface import Deffered
 from .graph.families.skybox import SkyBox
 import struct
 from typing import Any, TYPE_CHECKING
 import numpy as np
+import math
 import glm
 from dataclasses import dataclass, field
-from .graph.render_graph import RenderDomain, Graph
+from .graph.render_graph import RenderDomain, Graph, PassConfig
 from pathlib import Path
-import moderngl
+# from OpenGL import GL
 
 if TYPE_CHECKING:
     from ...gameplay.view import View
     from ...gameplay.skybox import SkyBox as CubeMapBox
 
 @dataclass
-class ShaderResource:
-    source: str
-    source_attachment: int
-    dest_location: int
-    is_imported: bool
-
-@dataclass
-class Uniform:
+class ShaderInput:
     name: str
     type_name: str
     location: int
+    is_texture: bool = False
+    is_imported: bool = False
+    source: str | None = None
+    source_attachment: int = 0
+    source_mip_level: int = 0
 
 @dataclass
 class RenderPass:
     name: str
     pipeline: RenderPipeline
     resource_set: ResourceSet
-    uniforms: list[Uniform]
-    resource_map: dict[str, ShaderResource]
+    inputs: list[ShaderInput]
     target: RenderTarget
-    target_cache: dict[tuple[int, int], RenderTarget] = field(default_factory=dict) # type: ignore
-    domain: RenderDomain = RenderDomain.SCENE
+    config: PassConfig = field(default_factory=PassConfig)
+    output_components: list[int] = field(default_factory=list) # type: ignore
+    target_cache: dict[tuple[int, int], tuple[RenderTarget, Any]] = field(default_factory=dict) # type: ignore
     output_type: str = "2d"
 
 @dataclass
@@ -61,12 +59,9 @@ class ViewPreparedData:
     max_indices_in_batch: int
     pass_targets: dict[str, RenderTarget] = field(default_factory=dict) # type: ignore
 
-import numpy as np
-
-
 class CubemapRenderer:
     @staticmethod
-    def look_at(eye, target, up):
+    def look_at(eye: np.ndarray, target: np.ndarray, up: np.ndarray):
         f = target - eye
         f /= np.linalg.norm(f)
         s = np.cross(f, up)
@@ -81,7 +76,7 @@ class CubemapRenderer:
         return m
 
     @staticmethod
-    def perspective(fov_deg, aspect, near, far):
+    def perspective(fov_deg: float, aspect: float, near: float, far: float):
         f = 1.0 / np.tan(np.radians(fov_deg) / 2.0)
         m = np.zeros((4, 4), dtype=np.float32)
         m[0, 0] = f / aspect
@@ -90,7 +85,6 @@ class CubemapRenderer:
         m[2, 3] = (2.0 * far * near) / (near - far)
         m[3, 2] = -1.0
         return m
-
 
     _FACE_DIRECTIONS = [
         (np.array([1, 0, 0]),  np.array([0, -1, 0])),  # +X (Right)
@@ -101,14 +95,160 @@ class CubemapRenderer:
         (np.array([0, 0, -1]), np.array([0, -1, 0])),  # -Z (Back)
     ]
 
+    CUBE_VERTEX_COUNT = 36
+
     @classmethod
-    def _build_mvp_matrices(cls):
+    def build_mvp_matrices(cls):
         proj = cls.perspective(90.0, 1.0, 0.1, 100.0)
-        mvps = []
+        mvps: list[np.ndarray] = []
         for target, up in cls._FACE_DIRECTIONS:
             view = cls.look_at(np.array([0, 0, 0], dtype=np.float32), target, up)
             mvps.append((proj @ view).T)
         return np.array(mvps, dtype=np.float32)
+
+class CascadeShadowRenderer:
+    DEFAULT_CASCADE_COUNT = 4
+    DEFAULT_LAMBDA = 0.5  # 0 = fully uniform splits, 1 = fully logarithmic
+ 
+    # ------------------------------------------------------------------
+    # Split scheme
+    # ------------------------------------------------------------------
+ 
+    @classmethod
+    def compute_splits(cls, near: float, far: float, count: int,
+                        lambda_: float = DEFAULT_LAMBDA) -> list[float]:
+        """Practical split scheme (Zhang et al.): blends a log split
+        (tight near the camera, where shadow error is most visible) with
+        a uniform split (avoids the far cascades from becoming absurdly
+        large). Returns `count` far-distances, e.g. for near=0.1, far=100,
+        count=4 you get something like [~4, ~14, ~35, 100]."""
+        splits = []
+        for i in range(1, count + 1):
+            p = i / count
+            log_split = near * (far / near) ** p
+            uniform_split = near + (far - near) * p
+            splits.append(lambda_ * log_split + (1.0 - lambda_) * uniform_split)
+        return splits
+ 
+    # ------------------------------------------------------------------
+    # Frustum corner extraction
+    # ------------------------------------------------------------------
+ 
+    @staticmethod
+    def _frustum_ray_corners(cam_view: glm.mat4, cam_proj: glm.mat4) -> list[tuple[glm.vec3, glm.vec3]]:
+        """Returns the 4 corner rays of the camera frustum, each as a
+        (near_point, far_point) pair in world space. Since a perspective
+        frustum's edges are straight lines from the eye, any depth along
+        the way is a linear interpolation between these two points --
+        that's what lets _split_corners() below avoid re-deriving a new
+        projection matrix per split."""
+        inv_vp = glm.inverse(cam_proj * cam_view)  # type: ignore
+        rays = []
+        for x in (-1.0, 1.0):
+            for y in (-1.0, 1.0):
+                near_clip = inv_vp * glm.vec4(x, y, -1.0, 1.0)  # type: ignore
+                far_clip = inv_vp * glm.vec4(x, y, 1.0, 1.0)  # type: ignore
+                near_pt = glm.vec3(near_clip) / near_clip.w  # type: ignore
+                far_pt = glm.vec3(far_clip) / far_clip.w  # type: ignore
+                rays.append((near_pt, far_pt))
+        return rays  # 4 entries
+ 
+    @staticmethod
+    def _split_corners(rays: list[tuple[glm.vec3, glm.vec3]],
+                        cam_near: float, cam_far: float,
+                        split_near: float, split_far: float) -> list[glm.vec3]:
+        t_near = (split_near - cam_near) / (cam_far - cam_near)
+        t_far = (split_far - cam_near) / (cam_far - cam_near)
+        corners = []
+        for near_pt, far_pt in rays:
+            corners.append(glm.mix(near_pt, far_pt, t_near))  # type: ignore
+            corners.append(glm.mix(near_pt, far_pt, t_far))  # type: ignore
+        return corners  # 8 entries
+ 
+    @staticmethod
+    def _light_ortho_for_corners(corners: list[glm.vec3], light_dir: glm.vec3,
+                                  texel_size: float | None = None,
+                                  z_padding: float = 50.0) -> glm.mat4:
+        
+        center = glm.vec3(0.0)  # type: ignore
+        for c in corners:
+            center += c
+        center /= len(corners)
+ 
+        light_dir_n = glm.normalize(light_dir)  # type: ignore
+        up = glm.vec3(0.0, 1.0, 0.0)  # type: ignore
+        if abs(glm.dot(light_dir_n, up)) > 0.99:  # type: ignore
+            up = glm.vec3(0.0, 0.0, 1.0)  # type: ignore
+ 
+        eye = center - light_dir_n * 500.0
+        light_view = glm.lookAt(eye, center, up)  # type: ignore
+ 
+        min_v = glm.vec3(float("inf"))  # type: ignore
+        max_v = glm.vec3(float("-inf"))  # type: ignore
+        for c in corners:
+            lv = light_view * glm.vec4(c, 1.0)  # type: ignore
+            min_v = glm.min(min_v, glm.vec3(lv))  # type: ignore
+            max_v = glm.max(max_v, glm.vec3(lv))  # type: ignore
+ 
+        min_v.z -= z_padding
+        max_v.z += z_padding
+ 
+        if texel_size:
+            min_v.x = math.floor(min_v.x / texel_size) * texel_size
+            min_v.y = math.floor(min_v.y / texel_size) * texel_size
+            max_v.x = math.floor(max_v.x / texel_size) * texel_size
+            max_v.y = math.floor(max_v.y / texel_size) * texel_size
+ 
+        # glm view space looks down -Z, so the visible range [min_v.z, max_v.z]
+        # (both typically negative) maps to near/far as -max_v.z / -min_v.z.
+        light_proj = glm.ortho(min_v.x, max_v.x, min_v.y, max_v.y, -max_v.z, -min_v.z)  # type: ignore
+        return light_proj * light_view  # type: ignore
+ 
+    # ------------------------------------------------------------------
+    # Public entry point
+    # ------------------------------------------------------------------
+ 
+    @classmethod
+    def compute_cascade_matrices(
+        cls,
+        cam_view: glm.mat4,
+        cam_proj: glm.mat4,
+        light_dir: glm.vec3,
+        cascade_count: int,
+        cam_near: float,
+        cam_far: float,
+        lambda_: float = DEFAULT_LAMBDA,
+        shadow_map_resolution: int | None = None,
+    ) -> tuple[bytes, list[float]]:
+        """Returns:
+            vp_bytes: cascade_count view-projection matrices, concatenated,
+                      ready to upload as e.g. sw_CascadeMatrices[0].
+            split_far_values: the view-space far-distance of each cascade,
+                      for sw_CascadeSplits -- the lighting pass uses these
+                      to pick which array layer to sample per-pixel.
+        """
+        splits = cls.compute_splits(cam_near, cam_far, cascade_count, lambda_)
+        rays = cls._frustum_ray_corners(cam_view, cam_proj)
+ 
+        vp_bytes = bytearray()
+        prev_near = cam_near
+        for split_far in splits:
+            corners = cls._split_corners(rays, cam_near, cam_far, prev_near, split_far)
+ 
+            texel_size = None
+            if shadow_map_resolution:
+                # Rough world-units-per-texel estimate for texel snapping.
+                # Uses the diagonal of the near-plane corners of this
+                # cascade as a stand-in for the ortho extent; good enough
+                # to kill shimmer, not meant to be exact.
+                span = glm.length(corners[1] - corners[0])  # type: ignore
+                texel_size = max(span, 1e-4) / shadow_map_resolution
+ 
+            vp = cls._light_ortho_for_corners(corners, light_dir, texel_size)
+            vp_bytes.extend(bytes(vp))  # glm mats are already column-major, matches GLSL layout
+            prev_near = split_far
+ 
+        return bytes(vp_bytes), splits
 
 class PipelineManager:
     _initialized = False
@@ -121,8 +261,6 @@ class PipelineManager:
     pipeline: RenderPipeline
     _graphs: dict[str, list[RenderPass]] = {}
 
-    CUBE_VERTEX_COUNT = 36  # 6 faces * 2 tris * 3 vértices, cubo unitário sem index buffer
-
     _CUBE_FACE_DIRECTIONS = [
         (glm.vec3( 1,  0,  0), glm.vec3(0, -1,  0)),  # +X
         (glm.vec3(-1,  0,  0), glm.vec3(0, -1,  0)),  # -X
@@ -134,28 +272,73 @@ class PipelineManager:
     _CUBE_PROJECTION = glm.perspective(glm.radians(90.0), 1.0, 0.1, 100.0) # type: ignore
 
     @classmethod
-    def _resolve_pass_target(
-        cls, render_pass: RenderPass, width: int, height: int, output_type: str = "2d"
+    def _apply_mip_config(cls, target: RenderTarget, config: PassConfig):
+        if config.mip_levels == 1 or len(target.color_attachments) == 0:
+            return
+        for i in range(len(target.color_attachments)):
+            tex = target.get_color_texture(i)
+            if config.mip_levels == -1:
+                tex.build_mipmaps(max_level=10)  # full chain — let moderngl use its own default
+            else:
+                tex.build_mipmaps(max_level=max(config.mip_levels - 1, 0))
+            tex.set_filters(moderngl.LINEAR_MIPMAP_LINEAR, moderngl.LINEAR)
+
+            # gl_tex = tex.texture if hasattr(tex, "texture") else tex
+
+            # print("Texture:", gl_tex)
+            # print("Size:", gl_tex.size)
+            # print("Components:", gl_tex.components)
+            # print("Filter:", gl_tex.filter)
+            # GL.glBindTexture(GL.GL_TEXTURE_2D, gl_tex.glo)
+
+            # base = GL.glGetTexParameteriv(
+            #     GL.GL_TEXTURE_2D,
+            #     GL.GL_TEXTURE_BASE_LEVEL
+            # )
+
+            # maximum = GL.glGetTexParameteriv(
+            #     GL.GL_TEXTURE_2D,
+            #     GL.GL_TEXTURE_MAX_LEVEL
+            # )
+
+            # print("BASE LEVEL:", base)
+            # print("MAX LEVEL:", maximum)
+            # print("MIP LEVEL COUNT:", maximum - base + 1)
+
+    @classmethod
+    def _create_pass_target(
+        cls, config: PassConfig, width: int, height: int, output_type: str, output_components: list[int]
     ) -> RenderTarget:
+        dtype = "f2" if config.hdr else "u1"
+
+        if output_type == "cubemap":
+            assert width == height, f"Cubemaps precisam ser quadradas (recebido {width}x{height})."
+            cubemap = cls.gfx_device.create_cubemap_framebuffer(width, [4], 4, dtype=dtype)
+            return cubemap.get_target()
+
+        elif output_type == "csm":
+            array = cls.gfx_device.create_array_framebuffer(
+                width, height, config.shadow_cascades, dtype=dtype, depth_only=True
+            )
+            return array.get_target()
+        
+        target = cls.gfx_device.create_mrt_framebuffer(
+            width, height, output_components, has_depth=config.depth_test or config.depth_write or config.depth_texture, dtype=dtype
+        )
+        cls._apply_mip_config(target, config)
+        return target
+
+    @classmethod
+    def _resolve_pass_target(cls, render_pass: RenderPass, width: int, height: int, output_type: str = "2d") -> RenderTarget:
         key = (width, height)
         cached = render_pass.target_cache.get(key)
         if cached is not None:
-            return cached
+            return cached[0]
 
-        if output_type == "cubemap":
-            assert width == height, (
-                f"Cubemaps precisam ser quadradas (recebido {width}x{height}) "
-                f"no pass '{render_pass.name}'."
-            )
-            cubemap = cls.gfx_device.create_cubemap_framebuffer(width, [4], 4)
-            new_target = cubemap.get_target()
-        else:
-            total_outputs = len(render_pass.target.color_attachments)
-            new_target = cls.gfx_device.create_mrt_framebuffer(
-                width, height, [4] * total_outputs, True
-            )
-
-        render_pass.target_cache[key] = new_target
+        new_target = cls._create_pass_target(
+            render_pass.config, width, height, output_type, render_pass.output_components
+        )
+        render_pass.target_cache[key] = (new_target, None)
         return new_target
 
     @staticmethod
@@ -226,11 +409,6 @@ class PipelineManager:
                 data = (int(ubo.binding), ResourceType.UNIFORM_BUFFER, ubo.name)
                 ubo_bindings.append(data)
                 
-            unis = introspection.inputs.uniforms
-            uniforms: list[Uniform] = []
-            for uni in unis:
-                uniform = Uniform(name=uni.name, type_name=uni.type_name, location=uni.location)
-                uniforms.append(uniform)
 
             resources = (ssbo_bindings + ubo_bindings)
             resources.sort(key=lambda x: x[0])
@@ -243,85 +421,86 @@ class PipelineManager:
 
             vertex_layout = cls.gfx_device.create_vertex_layout(shader_program)
 
+            config = shader.config
+
             pipeline = cls.gfx_device.create_render_pipeline(
                 RenderPipelineDescriptor(
                     shader=shader_program,
                     vertex_layout=vertex_layout,
-                    depth_test_enable=True,
-                    depth_compare_op="less_equal",
-                    cull_mode="none"
+                    depth_test_enable=config.depth_test,
+                    depth_write_enable=config.depth_write,   # new — confirm this kwarg exists on the descriptor
+                    depth_compare_op=config.depth_compare_op,
+                    cull_mode=config.cull_mode,
                 )
             )
 
-            inputs: dict[str, ShaderResource] = {}
-
+            TEXTURE_TYPES = {"sampler2D", "samplerCube", "sampler2DShadow", "samplerCubeShadow", "sampler2DArray", "sampler2DArrayShadow"}
+            inputs: list[ShaderInput] = []
             for input in introspection.inputs.uniforms:
+                is_texture = input.type_name in TEXTURE_TYPES
                 dependent = shader.dependencies.get(input.name)
-                
-                if dependent is None:
-                    if input.type_name in ["sampler2D", "samplerCube", "sampler2DShadow", "samplerCubeShadow"]:
-                        inputs[input.name] = ShaderResource(source=input.name, source_attachment=src_output_location, dest_location=input.location, is_imported=True) # type: ignore
-                        shader.program.set_program_location(input.name, input.location) # type: ignore
 
+                if dependent is None:
+                    shader_input = ShaderInput(name=input.name, type_name=input.type_name, location=input.location, is_texture=is_texture,)
+                    if is_texture:
+                        shader_input.source = input.name
+                        shader_input.is_imported = True
+                        shader.program.set_program_location(input.name, input.location) # type: ignore
+                    inputs.append(shader_input)
                     continue
 
-                src_name, src_shader = dependent
-
-                src_output_location = None
-                src_introspection = src_shader.program.get_introspection() # type: ignore
+                src_name, src_shader, *rest = dependent
+                mip_level = rest[0] if rest else 0
+                src_introspection = src_shader.program.get_introspection()  # type: ignore
 
                 if src_name[:6] == "depth_":
                     src_output_location = -1
-                    
-                for output in src_introspection.outputs.targets:
-                    if output.name == src_name:
-                        src_output_location = output.location
-                        break
+                else:
+                    src_output_location = None
+                    for output in src_introspection.outputs.targets:
+                        if output.name == src_name:
+                            src_output_location = output.location
+                            break
+                    if src_output_location is None:
+                        raise ValueError(
+                            f"Pass '{shader.name}': dependência '{input.name}' aponta para saída "
+                            f"'{src_name}' que não existe em '{src_shader.name}'."
+                        )
 
-                source = src_shader.name
-                inputs[input.name] = ShaderResource(source=source, source_attachment=src_output_location, dest_location=input.location, is_imported=False) # type: ignore
+                if is_texture:
+                    shader.program.set_program_location(input.name, input.location)  # type: ignore
 
-                if input.type_name in ["sampler2D", "samplerCube", "sampler2DShadow", "samplerCubeShadow"]:
-                    shader.program.set_program_location(input.name, input.location) # type: ignore
+                inputs.append(ShaderInput(
+                    name=input.name, type_name=input.type_name, location=input.location,
+                    is_texture=is_texture, source=src_shader.name,
+                    source_attachment=src_output_location, source_mip_level=mip_level,
+                ))
 
             output_locations = introspection.outputs.targets
             output_components = cls.get_component_sizes(output_locations)
 
-            domain = shader.domain
-
+            domain = config.domain
             if domain == RenderDomain.LIGHT:
                 target_w, target_h = cls.light_map_size
                 output_type = "2d"
             elif domain == RenderDomain.CUBEMAP:
                 target_w = target_h = cls.DEFAULT_CUBEMAP_SIZE
                 output_type = "cubemap"
+            elif domain == RenderDomain.CASCADE:
+                target_w, target_h = cls.light_map_size#config.cascade_resolution
+                output_type = "csm"
             else:
                 target_w, target_h = 1280, 720
                 output_type = "2d"
 
-            if output_type == "cubemap":
-                cubemap = cls.gfx_device.create_cubemap_framebuffer(target_w, [4], 4)
-                target = cubemap.get_target()
-            else:
-                target = cls.gfx_device.create_mrt_framebuffer(
-                    target_w, target_h, output_components, True
-                )
-
+            target = cls._create_pass_target(config, target_w, target_h, output_type, output_components)
             cls._resources[shader.name] = target
-
-            initial_width, initial_height = target_w, target_h
-            target_cache = {(initial_width, initial_height): target}
+            target_cache = {(target_w, target_h): (target, None)}
 
             render_pass = RenderPass(
-                pipeline=pipeline,
-                resource_set=shader_set,
-                uniforms=uniforms,
-                resource_map=inputs,
-                target=target,
-                target_cache=target_cache,
-                domain=domain,
-                output_type=output_type,
-                name=shader.name
+                pipeline=pipeline, resource_set=shader_set, inputs=inputs, target=target,
+                target_cache=target_cache, config=config, output_type=output_type,
+                output_components=output_components, name=shader.name,
             )
 
             render_passes.append(render_pass)
@@ -376,8 +555,7 @@ class PipelineManager:
             # "sw_SunIntensity": struct.pack('3f', *sun_intensity),
             "sw_SunDirection": struct.pack('3f', 0, 1, 0),
             "sw_Exposure": struct.pack('1f', 1.0),
-            # "sw_CubemapMVP": CubemapRenderer._build_mvp_matrices().tobytes(),
-            "sw_CubemapMVP[0]": CubemapRenderer._build_mvp_matrices().tobytes(),
+            "sw_CubemapMVP[0]": CubemapRenderer.build_mvp_matrices().tobytes(),
         }
 
         cls._resources: dict[str, RenderTarget] = {}
@@ -392,33 +570,6 @@ class PipelineManager:
         texture.texture.repeat_y = True # type: ignore
         texture.texture.filter = (moderngl.NEAREST, moderngl.NEAREST) # type: ignore
         cls._imported_resources["SSAO_Noise"] = texture
-
-        # skybox = cls.gfx_device.create_cubemap_framebuffer(512, [4], 4)
-        # # skybox_texture = skybox.get_target().color_attachments[0]
-
-        # face_files = [
-        #     "face_0_pos_x.png", "face_1_neg_x.png", 
-        #     "face_2_pos_y.png", "face_3_neg_y.png", 
-        #     "face_4_pos_z.png", "face_5_neg_z.png"
-        # ]
-
-        # SIZE = 512
-
-        # # 3. Load each image and write directly to its corresponding face
-        # for face_idx, file_path in enumerate(face_files):
-        #     img = Image.open(file_path).convert("RGBA")
-            
-        #     # Ensure image size matches the cubemap dimensions
-        #     if img.size != (SIZE, SIZE):
-        #         img = img.resize((SIZE, SIZE))
-                
-        #     # Extract raw pixel bytes
-        #     pixel_data = img.tobytes()
-            
-        #     # Write to specific face index
-        #     skybox._cubemap.write(face=face_idx, data=pixel_data)
-
-        # cls._imported_resources["bgSkybox"] = skybox._cubemap
 
         cls._load_graph(Deffered())
         cls._load_graph(SkyBox())
@@ -504,7 +655,9 @@ class PipelineManager:
 
         pass_targets: dict[str, RenderTarget] = {}
         for render_pass in passes:
-            if render_pass.domain == RenderDomain.LIGHT:
+            if render_pass.config.domain == RenderDomain.LIGHT:
+                w, h = cls.light_map_size
+            elif render_pass.config.domain == RenderDomain.CASCADE:
                 w, h = cls.light_map_size
             else:
                 w, h = vp_width, vp_height
@@ -569,15 +722,36 @@ class PipelineManager:
                     lights = vdata.scene.get_lights()
                     if lights:
                         light = lights[0]
-                        cls.set_uniform_value("sw_LightView", light.get_view())
-                        cls.set_uniform_value("sw_LightProjection", light.get_projection())
+                        # cls.set_uniform_value("sw_LightView", light.get_view())
+                        # cls.set_uniform_value("sw_LightProjection", light.get_projection())
                         light_dir = light.direction
                         cls.set_uniform_value("sw_LightDirection", struct.pack('3f', light_dir.x, light_dir.y, light_dir.z))
+
+                        if render_pass.config.domain == RenderDomain.CASCADE:
+                            cascade_count = render_pass.config.shadow_cascades
+                            resolution = cls.light_map_size[0]
+                            vp_bytes, splits = CascadeShadowRenderer.compute_cascade_matrices(
+                                cam_view=vdata.view_matrix,
+                                cam_proj=vdata.projection_matrix,
+                                light_dir=light_dir.unp(),
+                                cascade_count=cascade_count,
+                                cam_near=.1,#view.near,   # <<< TODO: troque por onde quer que sua View guarde o near-plane real
+                                cam_far=1000,#view.far,    # <<< TODO: idem para far-plane
+                                shadow_map_resolution=resolution,
+                            )
+                            cls.set_uniform_value("sw_LightViewProjections[0]", vp_bytes)
+                            cls.set_uniform_value("sw_CascadeCount", struct.pack("1i", cascade_count))
+                            cls.set_uniform_value("sw_CascadeSplits", struct.pack(f"{len(splits)}f", *splits))
+                        else:
+                            cls.set_uniform_value("sw_LightView", light.get_view())
+                            cls.set_uniform_value("sw_LightProjection", light.get_projection())
 
                 cam_pos = inv_view[3].xyz # type: ignore
                 cls.set_uniform_value("sw_CameraPosition", struct.pack('3f', cam_pos.x, cam_pos.y, cam_pos.z)) # type: ignore
 
-                if render_pass.domain == RenderDomain.LIGHT:
+                if render_pass.config.domain == RenderDomain.LIGHT:
+                    pass_viewport = (0, 0, cls.light_map_size[0], cls.light_map_size[1])
+                elif render_pass.config.domain == RenderDomain.CASCADE:
                     pass_viewport = (0, 0, cls.light_map_size[0], cls.light_map_size[1])
                 else:
                     pass_viewport = vdata.viewport
@@ -585,35 +759,49 @@ class PipelineManager:
                 cmd.begin_render_pass(target=current_target, viewport=pass_viewport, clear_color=(1.0, 0.0, 0.5))
                 cmd.set_pipeline(render_pass.pipeline)
 
-                for resource in render_pass.resource_map.values():
-                    if resource.is_imported:
-                        cmd.use_texture(cls._imported_resources.get(resource.source), location=resource.dest_location) # type: ignore
-                    else:
-                        src_target = vdata.pass_targets[resource.source]
-                        cmd.use_target_texture(
-                            src_render_target=src_target,
-                            src_attachment=resource.source_attachment,
-                            location=resource.dest_location
-                        )
+                for shader_input in render_pass.inputs:
+                    if not shader_input.is_texture:
+                        val = cls.get_uniform_value(shader_input.name)
+                        if val is not None:
+                            cmd.set_uniform_value(shader_input.name, val)
+                        continue
 
-                for uniform in render_pass.uniforms:
-                    val = cls.get_uniform_value(uniform.name)
-                    if val is not None:
-                        cmd.set_uniform_value(uniform.name, val)
+                    if shader_input.is_imported:
+                        cmd.use_texture(cls._imported_resources.get(shader_input.source), location=shader_input.location)  # unchanged
+                        continue
+
+                    src_target = vdata.pass_targets[shader_input.source]
+                    mip_level = shader_input.source_mip_level
+
+                    if mip_level is None: mip_level = 0
+                    
+                    if mip_level == -1:
+                        src_tex = src_target.get_color_texture(max(shader_input.source_attachment, 0))
+                        mip_level = src_tex.mip_levels - 1
+                        src_tex.build_mipmaps(max_level=mip_level + 5)
+
+                    cmd.use_target_texture(
+                        src_render_target=src_target,
+                        src_attachment=shader_input.source_attachment,
+                        location=shader_input.location,
+                        src_mip=mip_level,   # HAL now ignores this for GL state, but keep passing it —
+                    )                         # useful for logging/debugging and future use
+                    if mip_level != 0:
+                        cmd.set_uniform_value(f"{shader_input.name}Lod", struct.pack("1f", float(mip_level + 1)))
 
                 cmd.set_resource_set(set_index=0, resource_set=render_pass.resource_set)
 
-                if render_pass.domain in (RenderDomain.SCENE, RenderDomain.LIGHT):
+                if render_pass.config.domain in (RenderDomain.SCENE, RenderDomain.LIGHT, RenderDomain.CASCADE):
                     cmd.draw(domain="view", vertex_count=vdata.max_indices_in_batch, instance_count=vdata.object_count)
-                elif render_pass.domain == RenderDomain.SCREEN:
+                elif render_pass.config.domain == RenderDomain.SCREEN:
                     cmd.draw(domain="view", vertex_count=3, instance_count=1)
-                elif render_pass.domain == RenderDomain.CUBEMAP:
-                    cmd.draw(domain="cubemap", vertex_count=cls.CUBE_VERTEX_COUNT, instance_count=1)
+                elif render_pass.config.domain == RenderDomain.CUBEMAP:
+                    cmd.draw(domain="cubemap", vertex_count=CubemapRenderer.CUBE_VERTEX_COUNT, instance_count=1)
 
                 # if not hasattr(cls, "k"):
                 #     cls.k = 0
                 # if cls.k >= 50 and render_pass.name == "VolumetricFogPass":
-                # if render_pass.name in ["SkyPass", "TonemapPass", "LuminancePass"]:
+                # if render_pass.name in ["ShadowPass"]:#["SkyPas;zs", "TonemapPass", "LuminancePass"]:
                 #     cmd.save_image(Path(__file__).parent / "targets" / render_pass.name)
                 #     cls.k = 0
                 # cls.k += 1
@@ -661,7 +849,7 @@ class PipelineManager:
             visible_objects=None,
             render_obj_buffer=bytearray(),
             object_count=1,
-            max_indices_in_batch=cls.CUBE_VERTEX_COUNT,
+            max_indices_in_batch=CubemapRenderer.CUBE_VERTEX_COUNT,
             pass_targets=pass_targets,
         )
 

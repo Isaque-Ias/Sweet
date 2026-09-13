@@ -1,5 +1,6 @@
 from __future__ import annotations
 import struct
+import moderngl
 from typing import Any, Optional, TYPE_CHECKING
 from ..graphics.render.process import PipelineManager
 from .view import View
@@ -49,7 +50,7 @@ class NishitaSkyBox(SkyBox):
 
         self._resolution = 512
         self._cubemap = graphics_device.create_cubemap_framebuffer(self._resolution, [4], 4, dtype="f2")
-
+        self._cubemap.set_filters(moderngl.LINEAR, moderngl.LINEAR)
         self._target = self._cubemap.get_target()
 
     def _get_sun_parameters(self, time_ticks: int, horizontal_deg: float, weather: str = "clear"):
@@ -191,13 +192,12 @@ class NishitaSkyBox(SkyBox):
 
         sun_direction, sun_intensity = self._get_sun_parameters(time, direction, weather)
         sun_color, ambient_color = self._calculate_sun_and_ambient([0, 0, 0], np.array(sun_direction), np.array(sun_intensity))
-        sun_ldr = self.apply_hdr_pipeline(sun_color, ev100=15.0)
-        ambient_ldr = self.apply_hdr_pipeline(ambient_color, ev100=15.0)
-        # print(sun_color, ambient_color, sun_direction, sun_intensity, time, direction, weather)
-        PipelineManager.set_uniform_value("sw_SunIntensity", struct.pack('3f', 100, 100, 100))#sun_intensity, sun_intensity, sun_intensity))
+        # sun_color = self.apply_hdr_pipeline(sun_color, ev100=15.0)
+        # ambient_color = self.apply_hdr_pipeline(ambient_color, ev100=15.0)
+        PipelineManager.set_uniform_value("sw_SunIntensity", struct.pack('3f', sun_intensity, sun_intensity, sun_intensity))# 100, 100, 100))
         PipelineManager.set_uniform_value("sw_SunDirection", struct.pack('3f', *sun_direction))
-        PipelineManager.set_uniform_value("sw_LightColor", struct.pack('3f', *sun_ldr))
-        PipelineManager.set_uniform_value("sw_AmbientColor", struct.pack('3f', ambient_ldr[0] - 0.02, ambient_ldr[1] - 0.02, ambient_ldr[2] - 0.02))
+        PipelineManager.set_uniform_value("sw_LightColor", struct.pack('3f', *sun_color))
+        PipelineManager.set_uniform_value("sw_AmbientColor", struct.pack('3f', ambient_color[0] - 0.02, ambient_color[1] - 0.02, ambient_color[2] - 0.02))
 
         if self._scene:
            PipelineManager.process_cubemaps([self], "SkyBox")

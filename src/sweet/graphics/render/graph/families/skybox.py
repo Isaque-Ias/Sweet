@@ -1,4 +1,4 @@
-from ..render_graph import RenderGraph, RenderShader, RenderDomain
+from ..render_graph import RenderGraph, RenderShader, RenderDomain, PassConfig
 from ..render_graph import Graph
 from pathlib import Path
 
@@ -14,8 +14,12 @@ class SkyBox(Graph):
         sky_pass = RenderShader("SkyPass", cls._file_to_node(
             _PASSES / "cubemap.vert",
             _PASSES / "sky" / "nishita.frag",
-            geometry=_PASSES / "cubemap.geom",
-        ), RenderDomain.CUBEMAP)
+            geometry = _PASSES / "cubemap.geom",
+        ), PassConfig(
+            cull_mode="none",
+            domain=RenderDomain.CUBEMAP
+            )
+        )
 
         sky_pass.add_output("Backbuffer")
 

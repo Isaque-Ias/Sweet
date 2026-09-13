@@ -1,4 +1,4 @@
-from ..render_graph import RenderGraph, RenderShader, RenderDomain
+from ..render_graph import RenderGraph, RenderShader, RenderDomain, PassConfig, MipSelect
 from ..render_graph import Graph
 from pathlib import Path
 
@@ -32,9 +32,15 @@ class Deffered(Graph):
         )
 
         shadow_pass = RenderShader("ShadowPass", cls._file_to_node(
-            _PASSES / "shadow" / "shadow.vert",
+            _PASSES / "shadow" / "shadow_depth.vert",
             _PASSES / "shadow" / "shadow.frag",
-        ), RenderDomain.LIGHT)
+            # geometry=_PASSES / "shadow" / "shadow.geom"
+        ), PassConfig(
+            # hdr=False,
+            depth_texture=True,
+            domain=RenderDomain.LIGHT
+            )
+        )
 
         shadow_pass.add_input("Mesh_Positions")
         shadow_pass.add_input("Mesh_Normals")
@@ -44,7 +50,11 @@ class Deffered(Graph):
         gbuffer_pass = RenderShader("GBufferPass", cls._file_to_node(
             _PASSES / "gbuffer" / "gbuffer.vert",
             _PASSES / "gbuffer" / "gbuffer.frag",
-        ), RenderDomain.SCENE)
+        ), PassConfig(
+            depth_texture=True,
+            domain=RenderDomain.SCENE
+            )
+        )
 
         gbuffer_pass.add_input("Mesh_Positions")
         gbuffer_pass.add_input("Mesh_Normals")
@@ -57,7 +67,11 @@ class Deffered(Graph):
         ssao_pass = RenderShader("SSAOPass", cls._file_to_node(
             _PASSES / "fullscreen.vert",
             _PASSES / "ssao" / "ssao.frag",
-        ), RenderDomain.SCREEN)
+        ), PassConfig(
+            # hdr=False,
+            domain=RenderDomain.SCREEN
+            )
+        )
 
         ssao_pass.connect_input(
             "SSAO_Depth",
@@ -76,7 +90,11 @@ class Deffered(Graph):
         ssao_blur_x_pass = RenderShader("SSAOBlurXPass", cls._file_to_node(
             _PASSES / "fullscreen.vert",
             _PASSES / "ssao_blur" / "horizontal.frag",
-        ), RenderDomain.SCREEN)
+        ), PassConfig(
+            # hdr=False,
+            domain=RenderDomain.SCREEN
+            )
+        )
 
         ssao_blur_x_pass.connect_input(
             "SSAO_Input",
@@ -101,7 +119,11 @@ class Deffered(Graph):
         ssao_blur_y_pass = RenderShader("SSAOBlurYPass", cls._file_to_node(
             _PASSES / "fullscreen.vert",
             _PASSES / "ssao_blur" / "vertical.frag",
-        ), RenderDomain.SCREEN)
+        ), PassConfig(
+            # hdr=False,
+            domain=RenderDomain.SCREEN
+            )
+        )
 
         ssao_blur_y_pass.connect_input(
             "SSAO_Input",
@@ -126,7 +148,10 @@ class Deffered(Graph):
         lighting_pass = RenderShader("LightingPass", cls._file_to_node(
             _PASSES / "lighting" / "lighting.vert",
             _PASSES / "lighting" / "lighting.frag",
-        ), RenderDomain.SCREEN)
+        ), PassConfig(
+            domain=RenderDomain.SCREEN
+            )
+        )
 
         lighting_pass.connect_input(
             "Light_Albedo",
@@ -161,21 +186,6 @@ class Deffered(Graph):
 
         lighting_pass.add_output("Light_Out")
 
-        # bloom
-
-        bloom_pass = RenderShader("BloomPass", cls._file_to_node(
-            _PASSES / "fullscreen.vert",
-            _PASSES / "bloom" / "bloom.frag",
-        ), RenderDomain.SCREEN)
-
-        bloom_pass.connect_input(
-            "Bloom_Light",
-            lighting_pass,
-            "Light_Out",
-        )
-
-        bloom_pass.add_output("Bloom_Out")
-
         # ---------------------------------------------------------------------
         # 2. VOLUMETRIC FOG PASS (Composites fog over lit solid scene)
         # ---------------------------------------------------------------------
@@ -205,27 +215,15 @@ class Deffered(Graph):
 
         # fog_pass.add_output("outFog")
 
-        # blur bloom
-
-        bloom_blur_pass = RenderShader("BlurBloomPass", cls._file_to_node(
-            _PASSES / "fullscreen.vert",
-            _PASSES / "bloom" / "blur.frag",
-        ), RenderDomain.SCREEN)
-
-        bloom_blur_pass.connect_input(
-            "Bloom_Input",
-            bloom_pass,
-            "Bloom_Out",
-        )
-
-        bloom_blur_pass.add_output("BloomBlur_Out")
-
         # sky
 
         background_pass = RenderShader("SkyPass", cls._file_to_node(
             _PASSES / "sky" / "background.vert",
             _PASSES / "sky" / "background.frag",
-        ), RenderDomain.SCREEN)
+        ), PassConfig(
+            domain=RenderDomain.SCREEN
+            )
+        )
 
         background_pass.connect_input(
             "bgLight",
@@ -235,12 +233,53 @@ class Deffered(Graph):
 
         background_pass.add_output("bgOut")
 
+
+        # bloom
+
+        bloom_pass = RenderShader("BloomPass", cls._file_to_node(
+            _PASSES / "fullscreen.vert",
+            _PASSES / "bloom" / "bloom.frag",
+        ), PassConfig(
+            domain=RenderDomain.SCREEN
+            )
+        )
+
+        bloom_pass.connect_input(
+            "Bloom_Light",
+            background_pass,
+            "bgOut",
+        )
+
+        bloom_pass.add_output("Bloom_Out")
+
+        # blur bloom
+
+        bloom_blur_pass = RenderShader("BlurBloomPass", cls._file_to_node(
+            _PASSES / "fullscreen.vert",
+            _PASSES / "bloom" / "blur.frag",
+        ), PassConfig(
+            domain=RenderDomain.SCREEN
+            )
+        )
+
+        bloom_blur_pass.connect_input(
+            "Bloom_Input",
+            bloom_pass,
+            "Bloom_Out",
+        )
+
+        bloom_blur_pass.add_output("BloomBlur_Out")
+
         # Luminance
 
         luminance_pass = RenderShader("LuminancePass", cls._file_to_node(
             _PASSES / "fullscreen.vert",
             _PASSES / "tonemap" / "luminance.frag",
-        ), RenderDomain.SCREEN)
+        ), PassConfig(
+            mip_levels=-1,
+            domain=RenderDomain.SCREEN
+            )
+        )
 
         luminance_pass.connect_input(
             "hdrSceneTexture",
@@ -255,7 +294,10 @@ class Deffered(Graph):
         tonemap_pass = RenderShader("TonemapPass", cls._file_to_node(
             _PASSES / "fullscreen.vert",
             _PASSES / "tonemap" / "tonemap.frag",
-        ), RenderDomain.SCREEN)
+        ), PassConfig(
+            domain=RenderDomain.SCREEN
+            )
+        )
 
         tonemap_pass.connect_input(
             "TonehdrSceneTexture",
@@ -267,6 +309,13 @@ class Deffered(Graph):
             "avgLuminanceTex",
             luminance_pass,
             "LumPass",
+            MipSelect.LOWEST,
+        )
+
+        tonemap_pass.connect_input(
+            "HDRBloomTone",
+            bloom_blur_pass,
+            "BloomBlur_Out",
         )
 
         tonemap_pass.add_output("TonePass")
@@ -276,7 +325,10 @@ class Deffered(Graph):
         present_pass = RenderShader("PresentPass", cls._file_to_node(
             _PASSES / "present" / "present.vert",
             _PASSES / "present" / "present.frag",
-        ), RenderDomain.SCREEN)
+        ), PassConfig(
+            domain=RenderDomain.SCREEN
+            )
+        )
 
         present_pass.connect_input(
             "Present_Light",
