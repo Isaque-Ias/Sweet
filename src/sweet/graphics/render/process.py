@@ -115,14 +115,8 @@ class CascadeShadowRenderer:
     # ------------------------------------------------------------------
  
     @classmethod
-    def compute_splits(cls, near: float, far: float, count: int,
-                        lambda_: float = DEFAULT_LAMBDA) -> list[float]:
-        """Practical split scheme (Zhang et al.): blends a log split
-        (tight near the camera, where shadow error is most visible) with
-        a uniform split (avoids the far cascades from becoming absurdly
-        large). Returns `count` far-distances, e.g. for near=0.1, far=100,
-        count=4 you get something like [~4, ~14, ~35, 100]."""
-        splits = []
+    def compute_splits(cls, near: float, far: float, count: int, lambda_: float = DEFAULT_LAMBDA) -> list[float]:
+        splits: list[float] = []
         for i in range(1, count + 1):
             p = i / count
             log_split = near * (far / near) ** p
@@ -143,7 +137,7 @@ class CascadeShadowRenderer:
         that's what lets _split_corners() below avoid re-deriving a new
         projection matrix per split."""
         inv_vp = glm.inverse(cam_proj * cam_view)  # type: ignore
-        rays = []
+        rays: list[tuple[glm.vec3, glm.vec3]] = []
         for x in (-1.0, 1.0):
             for y in (-1.0, 1.0):
                 near_clip = inv_vp * glm.vec4(x, y, -1.0, 1.0)  # type: ignore
@@ -151,7 +145,7 @@ class CascadeShadowRenderer:
                 near_pt = glm.vec3(near_clip) / near_clip.w  # type: ignore
                 far_pt = glm.vec3(far_clip) / far_clip.w  # type: ignore
                 rays.append((near_pt, far_pt))
-        return rays  # 4 entries
+        return rays
  
     @staticmethod
     def _split_corners(rays: list[tuple[glm.vec3, glm.vec3]],
@@ -163,7 +157,7 @@ class CascadeShadowRenderer:
         for near_pt, far_pt in rays:
             corners.append(glm.mix(near_pt, far_pt, t_near))  # type: ignore
             corners.append(glm.mix(near_pt, far_pt, t_far))  # type: ignore
-        return corners  # 8 entries
+        return corners # type: ignore
  
     @staticmethod
     def _light_ortho_for_corners(corners: list[glm.vec3], light_dir: glm.vec3,
@@ -190,23 +184,17 @@ class CascadeShadowRenderer:
             min_v = glm.min(min_v, glm.vec3(lv))  # type: ignore
             max_v = glm.max(max_v, glm.vec3(lv))  # type: ignore
  
-        min_v.z -= z_padding
-        max_v.z += z_padding
+        min_v.z -= z_padding # type: ignore
+        max_v.z += z_padding # type: ignore
  
         if texel_size:
-            min_v.x = math.floor(min_v.x / texel_size) * texel_size
-            min_v.y = math.floor(min_v.y / texel_size) * texel_size
-            max_v.x = math.floor(max_v.x / texel_size) * texel_size
-            max_v.y = math.floor(max_v.y / texel_size) * texel_size
+            min_v.x = math.floor(min_v.x / texel_size) * texel_size # type: ignore
+            min_v.y = math.floor(min_v.y / texel_size) * texel_size # type: ignore
+            max_v.x = math.floor(max_v.x / texel_size) * texel_size # type: ignore
+            max_v.y = math.floor(max_v.y / texel_size) * texel_size # type: ignore
  
-        # glm view space looks down -Z, so the visible range [min_v.z, max_v.z]
-        # (both typically negative) maps to near/far as -max_v.z / -min_v.z.
         light_proj = glm.ortho(min_v.x, max_v.x, min_v.y, max_v.y, -max_v.z, -min_v.z)  # type: ignore
         return light_proj * light_view  # type: ignore
- 
-    # ------------------------------------------------------------------
-    # Public entry point
-    # ------------------------------------------------------------------
  
     @classmethod
     def compute_cascade_matrices(
@@ -220,13 +208,6 @@ class CascadeShadowRenderer:
         lambda_: float = DEFAULT_LAMBDA,
         shadow_map_resolution: int | None = None,
     ) -> tuple[bytes, list[float]]:
-        """Returns:
-            vp_bytes: cascade_count view-projection matrices, concatenated,
-                      ready to upload as e.g. sw_CascadeMatrices[0].
-            split_far_values: the view-space far-distance of each cascade,
-                      for sw_CascadeSplits -- the lighting pass uses these
-                      to pick which array layer to sample per-pixel.
-        """
         splits = cls.compute_splits(cam_near, cam_far, cascade_count, lambda_)
         rays = cls._frustum_ray_corners(cam_view, cam_proj)
  
@@ -237,15 +218,11 @@ class CascadeShadowRenderer:
  
             texel_size = None
             if shadow_map_resolution:
-                # Rough world-units-per-texel estimate for texel snapping.
-                # Uses the diagonal of the near-plane corners of this
-                # cascade as a stand-in for the ortho extent; good enough
-                # to kill shimmer, not meant to be exact.
                 span = glm.length(corners[1] - corners[0])  # type: ignore
                 texel_size = max(span, 1e-4) / shadow_map_resolution
  
             vp = cls._light_ortho_for_corners(corners, light_dir, texel_size)
-            vp_bytes.extend(bytes(vp))  # glm mats are already column-major, matches GLSL layout
+            vp_bytes.extend(bytes(vp))  # type: ignore
             prev_near = split_far
  
         return bytes(vp_bytes), splits
@@ -518,6 +495,8 @@ class PipelineManager:
         texcoord_buffer = UploadManager.get_bindless_buffer("texcoords").buffer
         indices_buffer = UploadManager.get_bindless_buffer("indices").buffer
         volume_buffer = UploadManager.get_bindless_buffer("volumes").buffer
+        texture_buffer = UploadManager.get_bindless_buffer("textures").buffer
+        material_buffer = UploadManager.get_bindless_buffer("materials").buffer
         cls.packet_buffer = cls.gfx_device.create_bindless_storage_buffer(4)
 
         cls.light_map_size = (4096, 4096)
@@ -528,6 +507,8 @@ class PipelineManager:
             "sw_Normals": normal_buffer,
             "sw_UVs": texcoord_buffer,
             "sw_Indices": indices_buffer,
+            "sw_Textures": texture_buffer,
+            "sw_Materials": material_buffer,
             "sw_RenderObjects": cls.packet_buffer,
             "sw_Volumes": volume_buffer,
         }
@@ -570,6 +551,24 @@ class PipelineManager:
         texture.texture.repeat_y = True # type: ignore
         texture.texture.filter = (moderngl.NEAREST, moderngl.NEAREST) # type: ignore
         cls._imported_resources["SSAO_Noise"] = texture
+
+        ntex = cls.gfx_device.create_texture2d(1, 1, 3)
+        # print(rgb_image.tobytes(), )
+        ntex.upload_pixels(b'\xff\xff\xff', 0, 0, 1, 1)
+        
+        cls._imported_resources["Light_ORM"] = ntex
+        cls._imported_resources["Light_Emissive"] = ntex
+        cls._imported_resources["Light_ClearCoat"] = ntex
+
+        # texture = cls.gfx_device.create_texture2d(1920, 1920, 3)
+        # BASE = Path(__file__).parent
+        # texture_data = ImportManager.load_texture(BASE / "passes" / "ssao" / "noise.png")
+        # rgb_image = texture_data.source.convert("RGB") # type: ignore
+        # texture.upload_pixels(rgb_image.tobytes(), 0, 0, 4, 4) # type: ignore
+        # texture.texture.repeat_x = True # type: ignore
+        # texture.texture.repeat_y = True # type: ignore
+        # texture.texture.filter = (moderngl.NEAREST, moderngl.NEAREST) # type: ignore
+        # cls._imported_resources["SSAO_Noise"] = texture
 
         cls._load_graph(Deffered())
         cls._load_graph(SkyBox())
@@ -632,6 +631,8 @@ class PipelineManager:
             visual = index_refs.get(int(obj), None)
             if visual and isinstance(visual.source.source_model, GPUMeshSource):
                 model = visual.source.source_model
+                material = visual.material.id.buffer_index
+                
                 pos_range = pos_buf.get_glsl_range(model.positions.buffer_index) # type: ignore
                 norm_range = norm_buf.get_glsl_range(model.normals.buffer_index) # type: ignore
                 uv_range = uv_buf.get_glsl_range(model.texcoords.buffer_index) # type: ignore
@@ -646,8 +647,10 @@ class PipelineManager:
                 packet.extend(norm_range)
                 packet.extend(uv_range)
                 packet.extend(idx_range)
+                packet.append(material)
+                packet.extend([0, 0, 0])
 
-                render_obj_buffer.extend(struct.pack('16f8I', *packet))
+                render_obj_buffer.extend(struct.pack('16f12I', *packet))
                 object_count += 1
 
         if object_count == 0:
@@ -767,17 +770,17 @@ class PipelineManager:
                         continue
 
                     if shader_input.is_imported:
-                        cmd.use_texture(cls._imported_resources.get(shader_input.source), location=shader_input.location)  # unchanged
+                        cmd.use_texture(cls._imported_resources.get(shader_input.source), location=shader_input.location)  # type: ignore
                         continue
 
-                    src_target = vdata.pass_targets[shader_input.source]
+                    src_target = vdata.pass_targets[shader_input.source] # type: ignore
                     mip_level = shader_input.source_mip_level
 
-                    if mip_level is None: mip_level = 0
+                    if mip_level is None: mip_level = 0 # type: ignore
                     
                     if mip_level == -1:
                         src_tex = src_target.get_color_texture(max(shader_input.source_attachment, 0))
-                        mip_level = src_tex.mip_levels - 1
+                        mip_level = src_tex.mip_levels - 1 # type: ignore
                         src_tex.build_mipmaps(max_level=mip_level + 5)
 
                     cmd.use_target_texture(
@@ -801,7 +804,7 @@ class PipelineManager:
                 # if not hasattr(cls, "k"):
                 #     cls.k = 0
                 # if cls.k >= 50 and render_pass.name == "VolumetricFogPass":
-                # if render_pass.name in ["BlurBloomPass", "bloomPass"]:#["SkyPas;zs", "TonemapPass", "LuminancePass"]:
+                # if render_pass.name in ["LightingPass", "VolumetricCloudPass"]:#["SkyPas;zs", "TonemapPass", "LuminancePass"]:
                 #     cmd.save_image(Path(__file__).parent / "targets" / render_pass.name)
                 #     cls.k = 0
                 # cls.k += 1

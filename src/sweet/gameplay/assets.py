@@ -4,17 +4,16 @@ from..resources.assets.import_data import NodeData, SceneData, MaterialData
 from .scene import Scene
 from .entity import Entity
 from typing import Optional
-from ..graphics.upload import UploadManager, GPUTexture, GPUSource
+from ..graphics.upload import UploadManager, GPUTexture, GPUSource, GPUMaterial
 from ..plataform.hal.manager import GraphicsDevice
 from dataclasses import dataclass
 from .visual import Visual
-from .material import Material, PBRMaterial#, PBRBaseLayer, PBREmissiveLayer, PBRSpecularLayer, PBRTransmissionLayer
 
 @dataclass
 class AssetSet:
     meshes: dict[str, list[GPUSource]]
     textures: dict[str, GPUTexture]
-    materials: dict[str, Material]
+    materials: dict[str, GPUMaterial]
 
 class Assets:
     @classmethod
@@ -22,80 +21,67 @@ class Assets:
         cls._gfx_device = graphics_device
 
     @classmethod
-    def _load_material(cls, material_data: MaterialData) -> Material:
-        # pbr = material_data.pbr_characteristics
-        # idx = pbr.base_color_texture.texture_index if pbr.base_color_texture is not None else 0
-        # material_data.texture_coordinate_map
-        material = PBRMaterial()
-        # material.base = PBRBaseLayer(
-        #     color_texture=,
-        # )
-        alpha_mode = material_data.alpha_mode
-        material.alpha_mode = alpha_mode
+    def _load_material(cls, material_data: MaterialData, texture_cache: dict[int, GPUTexture], orm_cache: dict[tuple[Optional[int], Optional[int]], GPUTexture]) -> GPUMaterial:
+        gpu_material = UploadManager.upload_material(material_data, texture_cache, orm_cache)
 
-        return material
+        return gpu_material # type: ignore
 
     @classmethod
-    def convert_to_entity(cls, node: NodeData, content: SceneData, parent: Optional[Entity] = None, mesh_set: Optional[dict[str, list[GPUSource]]] = None, material_set: Optional[dict[str, Material]] = None) -> Entity:
+    def convert_to_entity(cls, node: NodeData, content: SceneData, parent: Optional[Entity] = None, mesh_set: Optional[dict[str, list[GPUSource]]] = None, material_set: Optional[dict[str, GPUMaterial]] = None, texture_cache: Optional[dict[int, GPUTexture]] = None, orm_cache: Optional[dict[tuple[Optional[int], Optional[int]], GPUTexture]] = None) -> Entity:
         if material_set is None:
             material_set = {}
         if mesh_set is None:
             mesh_set = {}
+        if texture_cache is None:
+            texture_cache = {}
+        if orm_cache is None:
+            orm_cache = {}
 
         entity_children: list[Entity] = []
         for child in node.children:
-            converted_child = cls.convert_to_entity(child, content, parent, mesh_set, material_set)
+            converted_child = cls.convert_to_entity(child, content, parent, mesh_set, material_set, texture_cache, orm_cache)
             entity_children.append(converted_child)
 
         entity = Entity(node.name, entity_children, parent)
 
-        source_material_map: dict[str, Material] = {}
         if not node.mesh is None:
             mesh_data = content.meshes[node.mesh]
             sources = UploadManager.upload_mesh(mesh_data)
             mesh_set[mesh_data.name] = sources
 
-            for prim in mesh_data.primitives:
-                if prim.material is None:
-                    continue
-                
-                material_data = content.materials[prim.material]
-                material = cls._load_material(material_data)
-                
-                material_set[material_data.name] = material
-                source_material_map[mesh_data.name] = material
+            for prim, source in zip(mesh_data.primitives, sources):
+                material = None
+                if prim.material is not None:
+                    material_data = content.materials[prim.material]
+                    material = cls._load_material(material_data, texture_cache, orm_cache)
+                    material_set[material_data.name] = material
 
-            for source in sources:
-                source_material = source_material_map.get(mesh_data.name)
-                if source_material:
-                    visual = Visual(source, source_material)
-                    entity.attach_visual(visual)
+                visual = Visual(source, material)
+                entity.attach_visual(visual)
 
         return entity
 
     @classmethod
     def load_scene(cls, path: str | Path) -> tuple[AssetSet, Scene]:
         scene = ImportManager.load_scene(path)
-
         children = scene.nodes
         mesh_set: dict[str, list[GPUSource]] = {}
-        material_set: dict[str, Material] = {}
+        material_set: dict[str, GPUMaterial] = {}
+        texture_cache: dict[int, GPUTexture] = {}
+        orm_cache: dict[tuple[Optional[int], Optional[int]], GPUTexture] = {}
         entities: list[Entity] = []
         for child in children:
-            entity_tree = cls.convert_to_entity(child, scene, mesh_set=mesh_set, material_set=material_set)
+            entity_tree = cls.convert_to_entity(child, scene, mesh_set=mesh_set, material_set=material_set, texture_cache=texture_cache, orm_cache=orm_cache)
             entities.append(entity_tree)
 
-        texture_set: dict[str, GPUTexture] = {}
-        for texture in scene.textures.values():
-            texture_source = UploadManager.upload_texture(texture)
-            texture_set[texture.name] = texture_source
+        texture_set: dict[str, GPUTexture] = {tex.name: texture_cache[id(tex)] for tex in scene.textures.values() if id(tex) in texture_cache}
 
         assets = AssetSet(
             meshes=mesh_set,
             textures=texture_set,
             materials=material_set
         )
-        
+
         scene = Scene(
             name=scene.name,
             entities=entities
@@ -145,19 +131,22 @@ class Assets:
         asset_data = ImportManager.load_assets(path)
         texture_sources: dict[str, GPUTexture] = {}
         mesh_sources: dict[str, list[GPUSource]] = {}
-        material_sources: dict[str, Material] = {}
+        material_sources: dict[str, GPUMaterial] = {}
 
-        for texture in asset_data.textures.values():
-            source = UploadManager.upload_texture(texture)
-            texture_sources[texture.name] = source
+        texture_cache: dict[int, GPUTexture] = {}
+        orm_cache: dict[tuple[Optional[int], Optional[int]], GPUTexture] = {}
 
         for mesh in asset_data.meshes.values():
             source = UploadManager.upload_mesh(mesh)
             mesh_sources[mesh.name] = source
 
         for material in asset_data.materials.values():
-            source = cls._load_material(material)
-            material_sources[material.name] = source
+            source = UploadManager.upload_material(material, texture_cache, orm_cache)
+            material_sources[material.name] = source # type: ignore
+
+        for texture in asset_data.textures.values():
+            if id(texture) in texture_cache:
+                texture_sources[texture.name] = texture_cache[id(texture)]
 
         asset_set = AssetSet(
             meshes=mesh_sources,

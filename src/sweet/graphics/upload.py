@@ -9,8 +9,9 @@ from ..plataform.hal.manager import GraphicsDevice, VertexLayout, GPUBuffer, GPU
 from enum import Enum, auto
 from dataclasses import dataclass
 import ctypes
+from PIL import Image
 if TYPE_CHECKING:
-    from ..resources.assets.import_data import MeshData, TextureData, ShaderData
+    from ..resources.assets.import_data import MeshData, TextureData, ShaderData, MaterialData
 
 class GPUHandleType(Enum):
     SHADER = auto()
@@ -47,6 +48,10 @@ class GPUTexture:
     format: int
     width: int
     height: int
+
+@dataclass
+class GPUMaterial:
+    id: GPUView
 
 @dataclass
 class GPUHandle:
@@ -213,6 +218,7 @@ class UploadManager:
             "positions": GPUMemoryTracker(cls._gfx_device.create_bindless_storage_buffer(base_size_mb)),
             "normals": GPUMemoryTracker(cls._gfx_device.create_bindless_storage_buffer(base_size_mb)),
             "texcoords": GPUMemoryTracker(cls._gfx_device.create_bindless_storage_buffer(base_size_mb)),
+            "materials": GPUMemoryTracker(cls._gfx_device.create_bindless_storage_buffer(1)),
             "volumes": GPUMemoryTracker(cls._gfx_device.create_bindless_storage_buffer(base_size_mb))
         }
         cls.texture_tracker = GPUMemoryTracker(cls._gfx_device.create_bindless_texture_buffer(base_size_mb * 4))
@@ -224,7 +230,7 @@ class UploadManager:
         buffer = cls._interleaved_buffers.get(name, None)
         if not buffer is None:
             return buffer
-        if name == "texture":
+        if name == "textures":
             return cls.texture_tracker
         return cls.ebo_tracker
 
@@ -365,19 +371,86 @@ class UploadManager:
         return vertex_layout
 
     @classmethod
-    def upload_texture(cls, texture: TextureData) -> GPUTexture:
-        index = cls.texture_tracker.upload_data(texture.source.tobytes())
-        buffer_view = GPUView(
-            buffer_index=index
+    def _pack_rgba(cls, pixel_array: np.ndarray) -> np.ndarray:
+        if pixel_array.ndim == 2:
+            pixel_array = pixel_array[..., None]
+        channels = pixel_array.shape[-1]
+        if channels == 1:
+            pixel_array = np.repeat(pixel_array, 3, axis=-1)
+            channels = 3
+        if channels == 3:
+            h, w, _ = pixel_array.shape
+            alpha = np.full((h, w, 1), 255, dtype=np.uint8)
+            pixel_array = np.concatenate([pixel_array, alpha], axis=-1)
+        elif channels != 4:
+            raise ValueError(f"Formato de textura inesperado com {channels} canais")
+        return np.ascontiguousarray(pixel_array, dtype=np.uint8)
+
+    @classmethod
+    def _upload_pixel_array(cls, pixel_array: np.ndarray, width: int, height: int) -> GPUTexture:
+        rgba = cls._pack_rgba(pixel_array)
+        packed = rgba.reshape(-1, 4).view(np.uint32).reshape(-1)
+
+        idx = cls.texture_tracker.upload_data(packed)
+        byte_offset, _ = cls.texture_tracker.get_offset_size(idx)
+        assert byte_offset % 4 == 0, f"Texture byte offset {byte_offset} not 4-byte aligned"
+
+        return GPUTexture(
+            source=GPUView(buffer_index=byte_offset // 4),
+            format=4,
+            width=width,
+            height=height
         )
-        texture_source = GPUTexture(
-            source=buffer_view,
-            format=texture.components,
-            width=texture.width,
-            height=texture.height
-        )
-        
-        return texture_source
+
+    @classmethod
+    def upload_texture(cls, texture: TextureData, cache: Optional[dict[int, GPUTexture]] = None) -> GPUTexture:
+        if cache is not None:
+            cached = cache.get(id(texture))
+            if cached is not None:
+                return cached
+
+        pixel_array = np.asarray(texture.source, dtype=np.uint8)
+        gpu_texture = cls._upload_pixel_array(pixel_array, texture.width, texture.height)
+
+        if cache is not None:
+            cache[id(texture)] = gpu_texture
+        return gpu_texture
+
+    @classmethod
+    def _build_orm_array(
+        cls, occlusion_tex: Optional[TextureData], mr_tex: Optional[TextureData]
+    ) -> Optional[tuple[np.ndarray, int, int]]:
+        if occlusion_tex is None and mr_tex is None:
+            return None
+
+        ref_tex = mr_tex or occlusion_tex
+        width, height = ref_tex.width, ref_tex.height # type: ignore
+
+        def channel_or_default(tex: Optional[TextureData], channel: int, default: int) -> np.ndarray:
+            if tex is None:
+                return np.full((height, width), default, dtype=np.uint8)
+            arr = np.asarray(tex.source, dtype=np.uint8)
+            if arr.ndim == 2:
+                arr = arr[..., None]
+            if arr.shape[-1] <= channel:
+                return np.full((height, width), default, dtype=np.uint8)
+            chan = arr[..., channel]
+            if chan.shape != (height, width):
+                chan = np.array(Image.fromarray(chan).resize((width, height), Image.NEAREST)) # type: ignore
+            return chan
+
+        r = channel_or_default(occlusion_tex, 0, 255)  # AO
+        g = channel_or_default(mr_tex, 1, 255)          # roughness (glTF: G channel)
+        b = channel_or_default(mr_tex, 2, 0)            # metalness (glTF: B channel)
+        a = np.full((height, width), 255, dtype=np.uint8)
+
+        return np.stack([r, g, b, a], axis=-1), width, height
+
+    @classmethod
+    def _texref_words(cls, tex: Optional[GPUTexture]) -> list[int]:
+        if tex is None:
+            return [0, 0, 0, 0]  # count=0 => shader's hasTexture() returns false
+        return [tex.source.buffer_index, tex.width * tex.height, tex.width, tex.height]
 
     @classmethod
     def upload_volumes(cls, volume_configs: list[dict[str, Any]], max_capacity: int = 16) -> GPUVolumeSource:
@@ -421,3 +494,89 @@ class UploadManager:
             volume_view=GPUView(buffer_index=idx),
             volume_count=len(volume_configs)
         )
+
+    @classmethod
+    def upload_material(
+        cls,
+        material: MaterialData,
+        texture_cache: dict[int, GPUTexture],
+        orm_cache: dict[tuple[Optional[int], Optional[int]], GPUTexture],
+    ) -> Optional[GPUMaterial]:
+        pbr = material.pbr_characteristics
+        structural = material.structural_parameters
+
+        albedo_binding = pbr.base_color_texture
+        if albedo_binding is None or albedo_binding.texture is None:
+            system.warn(f"Material '{material.name}' sem textura base_color; upload ignorado")
+            return None
+        albedo_tex = cls.upload_texture(albedo_binding.texture, texture_cache)
+
+        occlusion_tex = (
+            structural.occlusion.binding.texture
+            if structural.occlusion and structural.occlusion.binding else None
+        )
+        mr_binding = pbr.metallic_roughness_texture
+        mr_tex = mr_binding.texture if mr_binding else None
+
+        orm_gpu: Optional[GPUTexture] = None
+        orm_key = (id(occlusion_tex) if occlusion_tex else None, id(mr_tex) if mr_tex else None)
+        if orm_key != (None, None):
+            orm_gpu = orm_cache.get(orm_key)
+            if orm_gpu is None:
+                built = cls._build_orm_array(occlusion_tex, mr_tex)
+                if built is not None:
+                    pixel_array, width, height = built
+                    orm_gpu = cls._upload_pixel_array(pixel_array, width, height)
+                    orm_cache[orm_key] = orm_gpu
+
+        specular_binding = pbr.specular_texture
+        specular_tex = (
+            cls.upload_texture(specular_binding.texture, texture_cache)
+            if specular_binding and specular_binding.texture else None
+        )
+
+        emissive_binding = structural.emissive.texture if structural.emissive else None
+        emissive_tex = (
+            cls.upload_texture(emissive_binding.texture, texture_cache)
+            if emissive_binding and emissive_binding.texture else None
+        )
+
+        texref_words = np.array(
+            cls._texref_words(albedo_tex) + cls._texref_words(orm_gpu) +
+            cls._texref_words(specular_tex) + cls._texref_words(emissive_tex),
+            dtype=np.uint32
+        )
+
+        occlusion_strength = structural.occlusion.scalar_modifier if structural.occlusion else 1.0
+        specular_factor = getattr(pbr, "specular_factor", 1.0)
+        specular_color_factor = getattr(pbr, "specular_color_factor", [1.0, 1.0, 1.0])
+        emissive_factor = structural.emissive.factor if structural.emissive else [0.0, 0.0, 0.0]
+
+        factor_words = np.array(
+            [pbr.metallic_factor, pbr.roughness_factor, occlusion_strength, specular_factor],
+            dtype=np.float32
+        )
+        emissive_words = np.array([*emissive_factor[:3], 0.0], dtype=np.float32)
+        specular_color_words = np.array([*specular_color_factor[:3], 0.0], dtype=np.float32)
+
+        payload = (
+            texref_words.tobytes() + factor_words.tobytes() +
+            emissive_words.tobytes() + specular_color_words.tobytes()
+        )
+
+        buffer_tracker = cls._interleaved_buffers["materials"]
+        idx = buffer_tracker.upload_data(payload)
+        return GPUMaterial(GPUView(idx))
+
+    @classmethod
+    def upload_materials(cls, materials: dict[int, MaterialData]) -> dict[int, GPUMaterial]:
+        texture_cache: dict[int, GPUTexture] = {}
+        orm_cache: dict[tuple[Optional[int], Optional[int]], GPUTexture] = {}
+        gpu_materials: dict[int, GPUMaterial] = {}
+
+        for key, material in materials.items():
+            gpu_material = cls.upload_material(material, texture_cache, orm_cache)
+            if gpu_material is not None:
+                gpu_materials[key] = gpu_material
+
+        return gpu_materials

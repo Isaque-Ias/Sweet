@@ -28,6 +28,7 @@ class TextureChannelBinding:
     texture_index: int
     tex_coord: int = 0
     transform: Optional[TextureTransform] = None
+    texture: Optional["TextureData"] = None
 
 @dataclass
 class PBRCharacteristics:

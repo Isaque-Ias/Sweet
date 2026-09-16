@@ -48,7 +48,7 @@ class NishitaSkyBox(SkyBox):
         self.views: list[View] = []
         self._scene: Optional[Scene] = None
 
-        self._resolution = 512
+        self._resolution = 256
         self._cubemap = graphics_device.create_cubemap_framebuffer(self._resolution, [4], 4, dtype="f2")
         self._cubemap.set_filters(moderngl.LINEAR, moderngl.LINEAR)
         self._target = self._cubemap.get_target()
@@ -199,7 +199,7 @@ class NishitaSkyBox(SkyBox):
         PipelineManager.set_uniform_value("sw_MoonDirection", struct.pack('3f', *moon_direction))
         PipelineManager.set_uniform_value("sw_SunDirection", struct.pack('3f', *sun_direction))
         PipelineManager.set_uniform_value("sw_LightColor", struct.pack('3f', *sun_color))
-        PipelineManager.set_uniform_value("sw_AmbientColor", struct.pack('3f', ambient_color[0] - 0.02, ambient_color[1] - 0.02, ambient_color[2] - 0.02))
+        PipelineManager.set_uniform_value("sw_AmbientColor", struct.pack('3f', ambient_color[0], ambient_color[1], ambient_color[2]))
 
         if self._scene:
            PipelineManager.process_cubemaps([self], "SkyBox")

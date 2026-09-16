@@ -12,6 +12,7 @@ struct RenderObject {
     Range normals;
     Range uvs;
     Range indices;
+    uint material_id;
 };
 
 layout(std430, binding = 4) readonly buffer sw_RenderObjects {
@@ -25,6 +26,7 @@ out vec3 v_world_position;
 out vec3 v_world_normal;
 out vec2 v_texcoord;
 out vec4 v_view_position;
+out uint v_material_id;
 
 void main()
 {
@@ -55,6 +57,7 @@ void main()
     v_view_position = view_pos;
     v_world_normal = normalize(mat3(object.model) * local_norm);
     v_texcoord = local_uv;
+    v_material_id = object.material_id;
 
     gl_Position = sw_Projection * view_pos;
 }

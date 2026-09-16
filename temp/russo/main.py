@@ -1,7 +1,6 @@
 import math
 import sweet as sw
 from sweet.core.linalg.vector import Vec3
-import struct
 
 sw.Engine.initialize(
     graphics_device=sw.GraphicsDevice.MODERNGL,
@@ -12,27 +11,36 @@ win1 = sw.Engine.create_window()
 win1.initialize(width=1366, height=768, title="Window 1")
 # win1.fullscreen = True
 
-assets = sw.Assets.load_assets(r"temp\russo\Untitled.glb")
-assets2 = sw.Assets.load_assets(r"temp\russo\progress.glb")
+# assets = sw.Assets.load_assets(r"temp\russo\Untitled.glb")
+assetsm1 = sw.Assets.load_scene(r"temp\russo\pbr_sphere.glb")
+# assets2 = sw.Assets.load_assets(r"temp\russo\progress.glb")
 # assets3 = sw.Assets.load_scene(r"temp\russo\scenario.glb")
-assets3 = sw.Assets.load_scene(r"temp\russo\RUSSO.glb")
-
+# assets3 = sw.Assets.load_scene(r"temp\russo\scen.glb")
 scene = sw.Scene("scene")
-first_key = list(assets.meshes.values())[0][0]
-sec_key = list(assets.materials.values())[0]
+# first_key = list(assets.meshes.values())[0][0]
+# sec_key = list(assetsm1[0].materials.values())[0]
 
+# i = 0
+# for asset in assets3[0].meshes.values():
+#     i += 1
+#     # if i > 1:
+#     # break
+#     tobj = sw.Entity(f"{i}ok")
+#     tobj.position = tobj.position * .1
+#     tobj.scale = tobj.scale * .1
+#     for prim in asset:
+#         vis = sw.Visual(prim, sec_key)
+#         tobj.attach_visual(vis)
+#     scene.add_entity(tobj)
 
-i = 0
-for asset in assets3[0].meshes.values():
-    i += 1
-    # if i > 1:
-    # break
-    tobj = sw.Entity(f"{i}ok")
-    for prim in asset:
-        vis = sw.Visual(prim, sec_key)
-        tobj.attach_visual(vis)
-    scene.add_entity(tobj)
-
+# ent = sw.Entity("aaaa")
+# ent.attach_visual(sw.Visual(list(assetsm1[0].meshes.values())[0][0], list(assetsm1[0].materials.values())[0]))
+# ent.attach_visual(sw.Visual(list(assetsm1[0].meshes.values())[0][1], list(assetsm1[0].materials.values())[0]))
+# ent.position = Vec3(0, 1, 0)
+scene = assetsm1[1]
+# for entity in assetsm1[1].entities:
+#     ent = entity
+#     scene.add_entity(ent)
 
 class Player(sw.GameModel):
     def __init__(self, win: sw.WindowSurface):
@@ -48,9 +56,9 @@ class Player(sw.GameModel):
         self.cam_rot = sw.core.linalg.rotation.EulerAngleXYZ()
 
         self.win = win
-        self.speed = 0.1
+        self.speed = 0.01
         self.k = 12
-        self.acc = 1
+        self.acc = self.speed
 
     def main(self):
 
@@ -86,40 +94,6 @@ class Player(sw.GameModel):
         if self.win.input.is_key_held(sw.Key.G):
             self.k -= 0.01
             skbx.update(time=self.k * 1000)
-
-        if self.win.input.is_key_held(sw.Key.Y):
-            self.acc *= 1.1
-
-        if self.win.input.is_key_held(sw.Key.U):
-            self.acc *= 0.9
-
-        if self.win.input.is_key_held(sw.Key.V):
-            light.near -= 0.01
-            light.near = max(0, light.near)
-            sw.graphics.render.process.PipelineManager.set_uniform_value(
-                "sw_Metallic", struct.pack("1f", light.near)
-            )
-
-        if self.win.input.is_key_held(sw.Key.B):
-            light.near += 0.01
-            light.near = min(1, light.near)
-            sw.graphics.render.process.PipelineManager.set_uniform_value(
-                "sw_Metallic", struct.pack("1f", light.near)
-            )
-
-        if self.win.input.is_key_held(sw.Key.N):
-            light.far -= 0.01
-            light.far = max(0, light.far)
-            sw.graphics.render.process.PipelineManager.set_uniform_value(
-                "sw_Roughness", struct.pack("1f", light.far)
-            )
-
-        if self.win.input.is_key_held(sw.Key.M):
-            light.far += 0.01
-            light.far = min(1, light.far)
-            sw.graphics.render.process.PipelineManager.set_uniform_value(
-                "sw_Roughness", struct.pack("1f", light.far)
-            )
 
         if self.win.input.is_key_held(sw.Key.LEFT_SHIFT):
             self.node.position = Vec3(

@@ -1,4 +1,5 @@
 import io
+import uuid
 from pathlib import Path
 from ...core import system
 import trimesh
@@ -54,6 +55,10 @@ class ImportManager:
     }
 
     @staticmethod
+    def _ensure_name(text: Optional[str]) -> str:
+        return str(uuid.uuid4()) if text is None else text
+
+    @staticmethod
     def load_compute_shaders(path: str | Path) -> ComputeData:
         solved_path = system.solve_path(path)
         with open(solved_path, "r") as file:
@@ -68,15 +73,15 @@ class ImportManager:
         absolute_fragment = system.solve_path(path_fragment)
         
         with open(absolute_vertex, "r") as file:
-            VERTEX_SHADER = file.read()
+            VERTEX_SHADER = file.read().rstrip()
         with open(absolute_fragment, "r") as file:
-            FRAGMENT_SHADER = file.read()
+            FRAGMENT_SHADER = file.read().rstrip()
 
         geometry_shader = None
         if not path_geometry is None:
             absolute_geometry = system.solve_path(path_geometry)
             with open(absolute_geometry, "r") as file:
-                geometry_shader = file.read()
+                geometry_shader = file.read().rstrip()
 
         shader_data = ShaderData(
             vertex=VERTEX_SHADER,
@@ -184,7 +189,7 @@ class ImportManager:
                 width=width,
                 height=height,
                 components=components,
-                name="[Textura sem nome]"
+                name=cls._ensure_name(None)
             )
     
     @classmethod
@@ -235,6 +240,7 @@ class ImportManager:
                 for node in content.nodes:
                     if (not node.mesh is None):
                         mesh_data = cls._get_mesh(node, content)
+                        mesh_data.name = cls._ensure_name(mesh_data.name)
                         mesh_set[mesh_data.name] = mesh_data
                         
                 return mesh_set
@@ -339,7 +345,7 @@ class ImportManager:
 
         for node_id in node_ids:
             glb_node = nodes[node_id]
-            name = glb_node.name or "[Sem nome]"
+            name = glb_node.name
             glb_children = glb_node.children or []
             flat_nodes.append(node_id)
             
@@ -355,7 +361,7 @@ class ImportManager:
             # lights = gltf.extensions["KHR_lights_punctual"]["lights"]
             
             node = NodeData(
-                name=name,
+                name=cls._ensure_name(name),
                 mesh=glb_node.mesh,
                 skin=glb_node.skin,
                 camera=camera,
@@ -449,23 +455,32 @@ class ImportManager:
             width=width,
             height=height,
             components=components,
-            name="[Textura sem nome]"
+            name=cls._ensure_name(source.name)
         )
         return final_image
 
     @classmethod
-    def _process_binding(cls, texture_info: GLBTextureInfo | GLBOcclusionTextureInfo | GLBNormalMaterialTexture | None, local_uv_map: dict[int, list[int]]) -> Optional[TextureChannelBinding]:
+    def _process_binding(
+        cls,
+        texture_info: GLBTextureInfo | GLBOcclusionTextureInfo | GLBNormalMaterialTexture | None,
+        local_uv_map: dict[int, list[int]],
+        content: GLTF2,
+        texture_cache: dict[int, TextureData],
+    ) -> Optional[TextureChannelBinding]:
         if texture_info is None:
             return None
-        
+
         idx = texture_info.index or 0
         coord = texture_info.texCoord or 0
-        
+
         if coord not in local_uv_map:
             local_uv_map[coord] = []
         if idx not in local_uv_map[coord]:
             local_uv_map[coord].append(idx)
-        
+
+        if idx not in texture_cache:
+            texture_cache[idx] = cls._get_texture(idx, content)
+
         transform_obj = None
         if hasattr(texture_info, "extensions") and texture_info.extensions:
             ext_transform = texture_info.extensions.get("KHR_texture_transform")
@@ -475,11 +490,16 @@ class ImportManager:
                     scale=ext_transform.get("scale", [1.0, 1.0]),
                     rotation=ext_transform.get("rotation", 0.0)
                 )
-        
-        return TextureChannelBinding(texture_index=idx or 0, tex_coord=coord or 0, transform=transform_obj)
+
+        return TextureChannelBinding(
+            texture_index=idx,
+            tex_coord=coord,
+            transform=transform_obj,
+            texture=texture_cache[idx],
+        )
 
     @classmethod
-    def _get_material(cls, index: int, content: GLTF2) -> MaterialData:
+    def _get_material(cls, index: int, content: GLTF2, texture_cache: dict[int, TextureData]) -> MaterialData:
         material = content.materials[index]
         
         local_uv_map: dict[int, list[int]] = {}
@@ -493,19 +513,19 @@ class ImportManager:
             pbr_struct.base_color_factor = pbr.baseColorFactor or [1.0, 1.0, 1.0, 1.0]
             pbr_struct.metallic_factor = pbr.metallicFactor or 1
             pbr_struct.roughness_factor = pbr.roughnessFactor or 1
-            pbr_struct.base_color_texture = cls._process_binding(pbr.baseColorTexture, local_uv_map)
-            pbr_struct.metallic_roughness_texture = cls._process_binding(pbr.metallicRoughnessTexture, local_uv_map)
+            pbr_struct.base_color_texture = cls._process_binding(pbr.baseColorTexture, local_uv_map, content, texture_cache)
+            pbr_struct.metallic_roughness_texture = cls._process_binding(pbr.metallicRoughnessTexture, local_uv_map, content, texture_cache)
 
         if material.extensions and "KHR_materials_specular" in material.extensions:
             spec = material.extensions["KHR_materials_specular"]
             pbr_struct.specular_factor = spec.get("specularFactor", 1.0)
             pbr_struct.specular_color_factor = spec.get("specularColorFactor", [1.0, 1.0, 1.0])
-            pbr_struct.specular_texture = cls._process_binding(spec.get("specularTexture"), local_uv_map)
+            pbr_struct.specular_texture = cls._process_binding(spec.get("specularTexture"), local_uv_map, content, texture_cache)
 
         structural_struct = StructuralParameters()
         
         if material.normalTexture:
-            binding = cls._process_binding(material.normalTexture, local_uv_map)
+            binding = cls._process_binding(material.normalTexture, local_uv_map, content, texture_cache)
             if binding:
                 structural_struct.normal = StructuralTexture(
                     binding=binding,
@@ -515,7 +535,7 @@ class ImportManager:
 
         if material.occlusionTexture:
             material.occlusionTexture.index
-            binding = cls._process_binding(material.occlusionTexture, local_uv_map)
+            binding = cls._process_binding(material.occlusionTexture, local_uv_map, content, texture_cache)
             if binding:
                 structural_struct.occlusion = StructuralTexture(
                     binding=binding,
@@ -525,11 +545,11 @@ class ImportManager:
 
         structural_struct.emissive = EmissiveCharacteristics(
             factor=material.emissiveFactor or [0, 0, 0],
-            texture=cls._process_binding(material.emissiveTexture, local_uv_map)
+            texture=cls._process_binding(material.emissiveTexture, local_uv_map, content, texture_cache)
         )
 
         material_data = MaterialData(
-            name=material.name or "[Material sem nome]",
+            name=cls._ensure_name(material.name),
             alpha_cutoff=resolved_cutoff,
             alpha_mode=resolved_alpha_mode,
             double_sided=bool(material.doubleSided),
@@ -600,7 +620,7 @@ class ImportManager:
         mesh_data = MeshData(
             primitives=primitives,
             aabb=mesh_aabb,
-            name=node.name or "[Sem nome]"
+            name=cls._ensure_name(node.name)
         )
 
         return mesh_data
@@ -629,11 +649,11 @@ class ImportManager:
                 perspec.znear or .1,
                 perspec.zfar or 1000.0,
             )
-
+        node.name = cls._ensure_name(node.name)
         if not mode is None and not projection is None:
-            camera_data = CameraData(camera_mode=mode, projection=projection, name=node.name or "[Sem nome]")
+            camera_data = CameraData(camera_mode=mode, projection=projection, name=node.name)
         else:
-            camera_data = CameraData(name=node.name or "[Sem nome]")
+            camera_data = CameraData(name=node.name)
 
         return camera_data
 
@@ -652,17 +672,19 @@ class ImportManager:
         return mesh_data, mesh_list
 
     @classmethod
-    def _get_material_list(cls, meshes: list[MeshData], content: GLTF2) -> tuple[dict[int, MaterialData], list[MaterialData]]:
+    def _get_material_list(cls, meshes: list[MeshData], content: GLTF2) -> tuple[dict[int, MaterialData], list[MaterialData], dict[int, TextureData]]:
         material_data: dict[int, MaterialData] = {}
         material_list: list[MaterialData] = []
+        texture_cache: dict[int, TextureData] = {}
+
         for mesh in meshes:
             for primitive in mesh.primitives:
                 if (not primitive.material is None) and material_data.get(primitive.material) is None:
-                    material = cls._get_material(primitive.material, content)
+                    material = cls._get_material(primitive.material, content, texture_cache)
                     material_data[primitive.material] = material
                     material_list.append(material)
             
-        return material_data, material_list
+        return material_data, material_list, texture_cache
 
     @classmethod
     def _get_texture_list(cls, materials: list[MaterialData], content: GLTF2) -> dict[int, TextureData]:
@@ -678,22 +700,20 @@ class ImportManager:
 
     @classmethod
     def _create_scene(cls, glbscene: GLBScene, content: GLTF2) -> SceneData:
-        name = glbscene.name or "[Sem nome]"
+        name = cls._ensure_name(glbscene.name)
         glb_nodes = glbscene.nodes or []
 
         node_data, flat_nodes = cls._node_hierarchy(glb_nodes, content.nodes, content)
         mesh_data, flat_mesh = cls._get_mesh_list(flat_nodes, content)
-        material_data, flat_material = cls._get_material_list(flat_mesh, content)
-        texture_data = cls._get_texture_list(flat_material, content)
+        material_data, _, texture_data = cls._get_material_list(flat_mesh, content)
 
-        scene = SceneData(
+        return SceneData(
             meshes=mesh_data,
             textures=texture_data,
             materials=material_data,
             nodes=node_data,
             name=name
         )
-        return scene
 
     @classmethod
     def _scene_validation(cls, path: str | Path, command: Callable[..., Any]) -> Any:
@@ -744,6 +764,7 @@ class ImportManager:
                 scene_set: dict[str, SceneData] = {}
                 for scene in content.scenes:
                     scene_data = cls._create_scene(scene, content)
+                    scene_data.name = cls._ensure_name(scene_data.name)
                     scene_set[scene_data.name] = scene_data
 
                 return scene_set
@@ -817,6 +838,7 @@ class ImportManager:
                 texture_set: dict[str, TextureData] = {}
                 for index in range(len(content.textures)):
                     texture_data = cls._get_texture(index, content)
+                    texture_data.name = cls._ensure_name(texture_data.name)
                     texture_set[texture_data.name] = texture_data
 
                 return texture_set
@@ -824,6 +846,7 @@ class ImportManager:
             elif file_format in (".png", ".jpeg"):
                 textures: dict[str, TextureData] = {}
                 texture = cls._load_png_texture(solved_path)
+                texture.name = cls._ensure_name(texture.name)
                 textures[texture.name] = texture
                 return textures
 
@@ -837,38 +860,30 @@ class ImportManager:
     @classmethod
     def load_assets(cls, path: str | Path) -> AssetData:
         def command(solved_path: Path, content: GLTF2 | None) -> AssetData:
-            if not content is None:
-                texture_set: dict[str, TextureData] = {}
-                for index in range(len(content.textures)):
-                    texture_data = cls._get_texture(index, content)
-                    texture_set[texture_data.name] = texture_data
-                    
-                mesh_set: dict[str, MeshData] = {}
-                for node in content.nodes:
-                    if (not node.mesh is None):
-                        mesh_data = cls._get_mesh(node, content)
-                        mesh_set[mesh_data.name] = mesh_data
-                    
-                material_set: dict[str, MaterialData] = {}
-                for index in range(len(content.materials)):
-                    material_data = cls._get_material(index, content)
-                    material_set[material_data.name] = material_data
-                
-                asset_data = AssetData(
-                    textures=texture_set,
-                    meshes=mesh_set,
-                    materials=material_set
-                )
-                return asset_data
-
-            else:
+            if content is None:
                 system.warn(f"Conteúdo de {solved_path} é vazio")
-                fallback_asset = AssetData(
-                    textures={},
-                    meshes={},
-                    materials={}
-                )
-                return fallback_asset
+                return AssetData(textures={}, meshes={}, materials={})
 
-        final_asset = cls._scene_validation(path, command)
-        return final_asset
+            mesh_set: dict[str, MeshData] = {}
+            for node in content.nodes:
+                if not node.mesh is None:
+                    mesh_data = cls._get_mesh(node, content)
+                    mesh_data.name = cls._ensure_name(mesh_data.name)
+                    mesh_set[mesh_data.name] = mesh_data
+
+            texture_cache: dict[int, TextureData] = {}
+            material_set: dict[str, MaterialData] = {}
+            for index in range(len(content.materials)):
+                material_data = cls._get_material(index, content, texture_cache)
+                material_data.name = cls._ensure_name(material_data.name)
+                material_set[material_data.name] = material_data
+
+            for index in range(len(content.textures)):
+                if index not in texture_cache:
+                    texture_cache[index] = cls._get_texture(index, content)
+
+            texture_set = {cls._ensure_name(tex.name): tex for tex in texture_cache.values()}
+
+            return AssetData(textures=texture_set, meshes=mesh_set, materials=material_set)
+
+        return cls._scene_validation(path, command)

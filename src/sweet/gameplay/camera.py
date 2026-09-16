@@ -7,6 +7,7 @@ from ..core.linalg.vector import Vec3
 
 class Projection(ABC):
     aspect: float
+    fov: float
 
 class CameraMode(Enum):
     PERSPECTIVE = auto()

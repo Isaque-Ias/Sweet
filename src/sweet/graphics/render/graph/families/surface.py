@@ -63,6 +63,9 @@ class Deffered(Graph):
         gbuffer_pass.add_output("depth_GBuffer")
         gbuffer_pass.add_output("GBuffer_Albedo")
         gbuffer_pass.add_output("GBuffer_Normals")
+        gbuffer_pass.add_output("GBuffer_ORM")
+        gbuffer_pass.add_output("GBuffer_Specular")
+        gbuffer_pass.add_output("GBuffer_Emissive")
 
         ssao_pass = RenderShader("SSAOPass", cls._file_to_node(
             _PASSES / "fullscreen.vert",
@@ -166,6 +169,24 @@ class Deffered(Graph):
         )
 
         lighting_pass.connect_input(
+            "Light_ORM",
+            gbuffer_pass,
+            "GBuffer_ORM",
+        )
+
+        lighting_pass.connect_input(
+            "Light_Emissive",
+            gbuffer_pass,
+            "GBuffer_Emissive",
+        )
+
+        lighting_pass.connect_input(
+            "Light_Specular",
+            gbuffer_pass,
+            "GBuffer_Specular",
+        )
+
+        lighting_pass.connect_input(
             "Light_Depth",
             gbuffer_pass,
             "depth_GBuffer",
@@ -185,35 +206,6 @@ class Deffered(Graph):
         )
 
         lighting_pass.add_output("Light_Out")
-
-        # ---------------------------------------------------------------------
-        # 2. VOLUMETRIC FOG PASS (Composites fog over lit solid scene)
-        # ---------------------------------------------------------------------
-        # fog_pass = RenderShader("VolumetricFogPass", cls._file_to_node(
-        #     _PASSES / "fullscreen.vert",
-        #     _PASSES / "fog" / "fog.frag",
-        # ), RenderDomain.SCREEN)
-
-        # # Reads current lit scene color to blend fog onto
-        # fog_pass.connect_input(
-        #     "fogSceneColor",
-        #     lighting_pass,
-        #     "Light_Out",
-        # )
-        # # Reads scene depth to stop raymarching at solid surfaces
-        # fog_pass.connect_input(
-        #     "fogDepth",
-        #     gbuffer_pass,
-        #     "depth_GBuffer",
-        # )
-        # # Reads shadow map for volumetric light shafts/god rays
-        # fog_pass.connect_input(
-        #     "fogShadow",
-        #     shadow_pass,
-        #     "depth_ShadowMap",
-        # )
-
-        # fog_pass.add_output("outFog")
 
         # sky
 

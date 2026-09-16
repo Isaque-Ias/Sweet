@@ -14,6 +14,7 @@ uniform sampler2D Light_SSAO;
 uniform sampler2D Light_ORM;
 uniform sampler2D Light_Emissive;   // rgb emissive radiance
 uniform sampler2D Light_ClearCoat;  // R = clearcoat intensity, G = clearcoat roughness
+uniform sampler2D Light_Specular;
 
 // --- Shadow map (single, no cascades) ---
 uniform sampler2D Light_ShadowMap;
@@ -34,15 +35,15 @@ uniform float sw_Bias = 0.0015;
 // --- PBR parameters (now act as multipliers over the sampled maps) ---
 uniform float sw_Roughness = 1.0;   // multiplies ORM.g
 uniform float sw_Metallic  = 1.0;   // multiplies ORM.b
-uniform float sw_Specular  = 0.5;   // dielectric reflectance amount -> F0 = 0.16 * Specular^2 (0.5 == the classic 0.04)
+uniform float sw_Specular  = 0.0;   // dielectric reflectance amount -> F0 = 0.16 * Specular^2 (0.5 == the classic 0.04)
 uniform float sw_Albedo    = 1.0;   // scales the sampled albedo until a real albedo color/tint exists
 
 // --- Clear coat ---
 uniform float sw_ClearCoat          = 0.0;  // multiplies ClearCoat.r, 0 = layer disabled
-uniform float sw_ClearCoatRoughness = 1.0;  // multiplies ClearCoat.g
+uniform float sw_ClearCoatRoughness = 0.0;  // multiplies ClearCoat.g
 
 // --- Emissive ---
-uniform vec3  sw_EmissiveColor    = vec3(1.0);
+uniform vec3  sw_EmissiveColor    = vec3(0.0);
 uniform float sw_EmissiveStrength = 1.0;
 
 // Reflection probe
@@ -202,7 +203,13 @@ void main()
     float shadow = shadow_factor(world_position, normal, L);
 
     // --- Base layer (existing dielectric/metal Cook-Torrance) ---
-    vec3 F0 = mix(vec3(0.16 * sw_Specular * sw_Specular), albedo, metallic);
+    float spec_map = texture(Light_Specular, v_uv).r;
+    float dielectric_specular = 0.16 * pow(sw_Specular * spec_map, 2.0);
+
+    // Base layer F0 (Interpolated between calculated dielectric specular and original albedo for metals)
+    vec3 F0 = mix(vec3(dielectric_specular), albedo, metallic);
+
+    //vec3 F0 = mix(vec3(0.16 * sw_Specular * sw_Specular), albedo, metallic);
 
     float D = distribution_ggx(N, H, roughness);
     float G = geometry_smith(NdotV, NdotL, roughness);

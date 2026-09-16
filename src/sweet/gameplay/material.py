@@ -1,17 +1,18 @@
 from abc import ABC, abstractmethod
-from typing import Any, Optional
+from typing import Optional
 from ..resources.assets.import_data import AlphaMode
-from ..graphics.upload import GPUTexture
+from ..graphics.upload import GPUTexture, GPUMaterial
 from dataclasses import dataclass, field
 
 class Material(ABC):
+    @property
     @abstractmethod
-    def extract(self) -> Any:
+    def alpha_mode(self) -> AlphaMode:
         pass
 
     @property
     @abstractmethod
-    def alpha_mode(self) -> AlphaMode:
+    def source_material(self) -> GPUMaterial:
         pass
 
 @dataclass
@@ -42,14 +43,16 @@ class PBREmissiveLayer:
     factor: float = 1.0
 
 class PBRMaterial(Material):
-    def __init__(self, alpha_mode: AlphaMode = AlphaMode.OPAQUE):
-        self._alpha_mode = alpha_mode
+    def __init__(self):
+        self._alpha_mode = AlphaMode.OPAQUE
         
         self.base = PBRBaseLayer()
         self.specular = PBRSpecularLayer()
-        self.transmission = PBRTransmissionLayer()
         self.emissive = PBREmissiveLayer()
-
+        self.orm = None
+        self.specular = None
+        self._material_id = None
+        
     @property
     def alpha_mode(self) -> AlphaMode:
         return self._alpha_mode
@@ -58,12 +61,6 @@ class PBRMaterial(Material):
     def alpha_mode(self, alpha_mode: AlphaMode) -> None:
         self._alpha_mode = alpha_mode
 
-    def extract(self) -> dict[str, Any]:
-        return {
-            "base_color": self.base.color_factor,
-            "metalness": self.base.metalness_factor,
-            "roughness": self.base.roughness_factor,
-            "specular": self.specular.factor,
-            "transmission": self.transmission.factor,
-            "emissive": self.emissive.factor,
-        }
+    @property
+    def source_material(self) -> GPUMaterial:
+        return self._material_id # type: ignore
