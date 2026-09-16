@@ -801,7 +801,7 @@ class PipelineManager:
                 # if not hasattr(cls, "k"):
                 #     cls.k = 0
                 # if cls.k >= 50 and render_pass.name == "VolumetricFogPass":
-                # if render_pass.name in ["ShadowPass"]:#["SkyPas;zs", "TonemapPass", "LuminancePass"]:
+                # if render_pass.name in ["BlurBloomPass", "bloomPass"]:#["SkyPas;zs", "TonemapPass", "LuminancePass"]:
                 #     cmd.save_image(Path(__file__).parent / "targets" / render_pass.name)
                 #     cls.k = 0
                 # cls.k += 1

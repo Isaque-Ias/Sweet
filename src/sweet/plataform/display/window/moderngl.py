@@ -1,4 +1,5 @@
 from sweet.core import system
+import OpenGL.GL as gl
 import moderngl_window as mglw
 from moderngl_window.context.base import BaseWindow
 from ...inputs.window_input import WindowInput
@@ -133,6 +134,7 @@ class _SecondaryWindowProxy:
         handle = self.get_native_handle()
         if handle:
             glfw.make_context_current(handle) # type: ignore
+            gl.glEnable(gl.GL_TEXTURE_CUBE_MAP_SEAMLESS) # type: ignore
 
     def poll_events(self) -> bool:
         if not self._active:
@@ -182,6 +184,7 @@ class GLWindow(WindowSurface):
     def make_current(self):
         if self.wnd:
             glfw.make_context_current(self.wnd._window) # type: ignore
+            gl.glEnable(gl.GL_TEXTURE_CUBE_MAP_SEAMLESS) # type: ignore
 
     def initialize(self, width: int, height: int, title: str):
         self._size = (width, height)

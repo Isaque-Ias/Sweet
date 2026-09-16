@@ -240,7 +240,8 @@ class Deffered(Graph):
             _PASSES / "fullscreen.vert",
             _PASSES / "bloom" / "bloom.frag",
         ), PassConfig(
-            domain=RenderDomain.SCREEN
+            domain=RenderDomain.SCREEN,
+            mip_levels=6
             )
         )
 

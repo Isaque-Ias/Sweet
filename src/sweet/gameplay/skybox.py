@@ -190,11 +190,13 @@ class NishitaSkyBox(SkyBox):
         direction: float = kwargs.get("direction", 0)
         weather: str = kwargs.get("weather", "clear")
 
+        moon_direction, _ = self._get_sun_parameters(time + 100, direction, weather)
         sun_direction, sun_intensity = self._get_sun_parameters(time, direction, weather)
         sun_color, ambient_color = self._calculate_sun_and_ambient([0, 0, 0], np.array(sun_direction), np.array(sun_intensity))
         # sun_color = self.apply_hdr_pipeline(sun_color, ev100=15.0)
         # ambient_color = self.apply_hdr_pipeline(ambient_color, ev100=15.0)
         PipelineManager.set_uniform_value("sw_SunIntensity", struct.pack('3f', sun_intensity, sun_intensity, sun_intensity))# 100, 100, 100))
+        PipelineManager.set_uniform_value("sw_MoonDirection", struct.pack('3f', *moon_direction))
         PipelineManager.set_uniform_value("sw_SunDirection", struct.pack('3f', *sun_direction))
         PipelineManager.set_uniform_value("sw_LightColor", struct.pack('3f', *sun_color))
         PipelineManager.set_uniform_value("sw_AmbientColor", struct.pack('3f', ambient_color[0] - 0.02, ambient_color[1] - 0.02, ambient_color[2] - 0.02))

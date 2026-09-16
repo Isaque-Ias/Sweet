@@ -242,6 +242,9 @@ class ModernGLCubemap(Cubemap):
             dtype=dtype,
         )
 
+        self._cubemap.repeat_x = False # type: ignore
+        self._cubemap.repeat_y = False # type: ignore
+
         # The working implementation uses a color-only layered FBO.
         # A normal 2D depth texture cannot be attached to a layered color FBO:
         # populated framebuffer attachments must agree on layered-ness.
@@ -630,6 +633,7 @@ class ModernGLWindowTarget(RenderTarget):
     def make_current(self):
         if self.window and hasattr(self.window, "make_current"):
             self.window.make_current()
+            gl.glEnable(gl.GL_TEXTURE_CUBE_MAP_SEAMLESS) # type: ignore
 
             if hasattr(self.window, "size"):
                 w, h = self.window.size
@@ -1365,12 +1369,14 @@ class ModernGLGraphicsDevice(GraphicsDevice):
 
         self._dummy_window = glfw.create_window(1, 1, "DummyContextWindow", None, None)  # type: ignore
         glfw.make_context_current(self._dummy_window)  # type: ignore
-
+        
         platform = glfw.get_platform()
         if platform == glfw.PLATFORM_WAYLAND:
             self.ctx = moderngl.create_context(gl_version=(4, 6), backend="egl", share=True)  # type: ignore
         else:
             self.ctx = moderngl.create_context(gl_version=(4, 6))  # type: ignore
+
+        gl.glEnable(gl.GL_TEXTURE_CUBE_MAP_SEAMLESS) # type: ignore
 
     def initialize(self):
         if not self.ctx:

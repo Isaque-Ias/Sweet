@@ -35,6 +35,7 @@ for asset in assets3[0].meshes.values():
 class Player(sw.GameModel):
     def __init__(self, win: sw.WindowSurface):
         self.camera = sw.Camera()
+        self.camera.projection.fov = 60
         self.camera.position = Vec3(0, 3, 0)
         
         self.render = sw.View(sw.UpdatePolicy.EVERY_FRAME)
