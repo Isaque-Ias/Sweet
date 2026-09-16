@@ -9,6 +9,12 @@ uniform sampler2D Light_Normals;
 uniform sampler2D Light_Depth;
 uniform sampler2D Light_SSAO;
 
+// --- PBR material maps ---
+// ORM packing: R = occlusion (material AO), G = roughness, B = metallic
+uniform sampler2D Light_ORM;
+uniform sampler2D Light_Emissive;   // rgb emissive radiance
+uniform sampler2D Light_ClearCoat;  // R = clearcoat intensity, G = clearcoat roughness
+
 // --- Shadow map (single, no cascades) ---
 uniform sampler2D Light_ShadowMap;
 uniform mat4 sw_LightView;
@@ -25,11 +31,19 @@ uniform vec2 sw_ShadowMapSize;
 uniform float sw_Radius = 1.5;   // PCF sample spread, in texels
 uniform float sw_Bias = 0.0015;
 
-// --- Incremental PBR parameters (scalar for now, no maps yet) ---
-uniform float sw_Roughness = 0.0;   // 0 = mirror, 1 = fully rough
-uniform float sw_Metallic  = 0.0;   // 0 = dielectric, 1 = metal
-uniform float sw_Specular  = 0.0;   // dielectric reflectance amount, replaces a fixed 0.04 F0
-uniform float sw_Albedo    = 1.0;   // scales the sampled albedo until a real albedo map/color exists
+// --- PBR parameters (now act as multipliers over the sampled maps) ---
+uniform float sw_Roughness = 1.0;   // multiplies ORM.g
+uniform float sw_Metallic  = 1.0;   // multiplies ORM.b
+uniform float sw_Specular  = 0.5;   // dielectric reflectance amount -> F0 = 0.16 * Specular^2 (0.5 == the classic 0.04)
+uniform float sw_Albedo    = 1.0;   // scales the sampled albedo until a real albedo color/tint exists
+
+// --- Clear coat ---
+uniform float sw_ClearCoat          = 0.0;  // multiplies ClearCoat.r, 0 = layer disabled
+uniform float sw_ClearCoatRoughness = 1.0;  // multiplies ClearCoat.g
+
+// --- Emissive ---
+uniform vec3  sw_EmissiveColor    = vec3(1.0);
+uniform float sw_EmissiveStrength = 1.0;
 
 // Reflection probe
 uniform samplerCube sw_Skybox;
@@ -101,10 +115,10 @@ vec3 sample_blurred_reflection(vec3 R, float roughness)
     for (int i = 0; i < PCF_SAMPLES; ++i)
     {
         vec2 offset = POISSON_DISK[i] * filter_spread;
-        
+
         // Perturb reflection ray within the local hemisphere cone
         vec3 sampled_dir = normalize(R + Tangent * offset.x + Bitangent * offset.y);
-        
+
         // Combine directional Poisson sampling with mipmap LOD filtering
         blurred_color += textureLod(sw_Skybox, sampled_dir, target_lod).rgb;
     }
@@ -156,7 +170,21 @@ void main()
 
     vec3 albedo = texture(Light_Albedo, v_uv).rgb * sw_Albedo;
     vec3 normal = normalize(texture(Light_Normals, v_uv).rgb * 2.0 - 1.0);
-    float ao = texture(Light_SSAO, v_uv).r;
+
+    // ORM: R = material AO, G = roughness, B = metallic
+    vec3 orm = texture(Light_ORM, v_uv).rgb;
+    float material_ao = orm.r;
+    float roughness = clamp(orm.g * sw_Roughness, 0.045, 1.0); // 0.045 floor avoids a degenerate mirror NDF
+    float metallic  = clamp(orm.b * sw_Metallic, 0.0, 1.0);
+
+    float screen_ao = texture(Light_SSAO, v_uv).r;
+    float ao = material_ao * screen_ao;
+
+    vec3 emissive = texture(Light_Emissive, v_uv).rgb * sw_EmissiveColor * sw_EmissiveStrength;
+
+    vec2 clearcoat_map = texture(Light_ClearCoat, v_uv).rg;
+    float clearcoat = clamp(clearcoat_map.r * sw_ClearCoat, 0.0, 1.0);
+    float clearcoat_roughness = clamp(clearcoat_map.g * sw_ClearCoatRoughness, 0.045, 1.0);
 
     vec3 view_position = reconstruct_view_position(v_uv, depth);
     vec4 world_position4 = sw_InvView * vec4(view_position, 1.0);
@@ -169,28 +197,48 @@ void main()
 
     float NdotV = max(dot(N, V), 1e-4);
     float NdotL = max(dot(N, L), 0.0);
+    float VdotH = max(dot(V, H), 0.0);
 
     float shadow = shadow_factor(world_position, normal, L);
 
-    vec3 F0 = mix(vec3(0.16 * sw_Specular * sw_Specular), albedo, sw_Metallic);
+    // --- Base layer (existing dielectric/metal Cook-Torrance) ---
+    vec3 F0 = mix(vec3(0.16 * sw_Specular * sw_Specular), albedo, metallic);
 
-    float D = distribution_ggx(N, H, sw_Roughness);
-    float G = geometry_smith(NdotV, NdotL, sw_Roughness);
-    vec3 F = fresnel_schlick(max(dot(H, V), 0.0), F0);
+    float D = distribution_ggx(N, H, roughness);
+    float G = geometry_smith(NdotV, NdotL, roughness);
+    vec3 F = fresnel_schlick(VdotH, F0);
 
     vec3 specular = (D * G * F) / max(4.0 * NdotV * NdotL, 1e-4);
 
-    vec3 kD = (vec3(1.0) - F) * (1.0 - sw_Metallic);
+    vec3 kD = (vec3(1.0) - F) * (1.0 - metallic);
     vec3 diffuse = kD * albedo / PI;
 
-    vec3 direct = (diffuse + specular) * sw_LightColor * NdotL * shadow;
+    // --- Clear coat layer ---
+    // A thin, always-dielectric (F0 = 0.04, IOR ~1.5) lacquer sitting on top of
+    // the base layer. It reuses the geometric normal here; if you later add a
+    // clearcoat normal map, sample it separately and use it in place of N below.
+    float Dc = distribution_ggx(N, H, clearcoat_roughness);
+    float Gc = geometry_smith(NdotV, NdotL, clearcoat_roughness);
+    vec3 Fc0 = vec3(0.04);
+    vec3 Fc_raw = fresnel_schlick(VdotH, Fc0);       // fresnel of the coat itself, unscaled
+    vec3 Fc = Fc_raw * clearcoat;                    // scaled by how much coat is present
+
+    vec3 clearcoat_specular = vec3((Dc * Gc) / max(4.0 * NdotV * NdotL, 1e-4)) * Fc;
+
+    // Energy conservation: whatever the coat reflects, the base layer doesn't get.
+    vec3 base_attenuation = vec3(1.0) - Fc;
+
+    vec3 direct = (diffuse + specular) * base_attenuation * sw_LightColor * NdotL * shadow
+                + clearcoat_specular * sw_LightColor * NdotL * shadow;
 
     // --- Multi-level Blurred Reflection Evaluation ---
     vec3 R = reflect(-V, N);
-    vec3 reflection = sample_blurred_reflection(R, sw_Roughness);
-    vec3 reflection_term = reflection * F;
+    vec3 reflection = sample_blurred_reflection(R, roughness);
+    vec3 reflection_term = reflection * F * base_attenuation;
 
-    vec3 ambient = albedo * sw_AmbientColor * ao * (1.0 - sw_Metallic);
+    vec3 reflection_clearcoat = sample_blurred_reflection(R, clearcoat_roughness) * Fc;
 
-    Light_Out = vec4(ambient + direct + reflection_term, 1.0);
+    vec3 ambient = albedo * sw_AmbientColor * ao * (1.0 - metallic) * base_attenuation;
+
+    Light_Out = vec4(ambient + direct + reflection_term + reflection_clearcoat + emissive, 1.0);
 }
