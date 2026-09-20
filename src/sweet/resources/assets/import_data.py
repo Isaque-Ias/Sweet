@@ -33,13 +33,20 @@ class TextureChannelBinding:
 @dataclass
 class PBRCharacteristics:
     base_color_factor: list[float] = field(default_factory=lambda: [1.0, 1.0, 1.0, 1.0])
+    base_color_texture: Optional[TextureChannelBinding] = None
+    
     metallic_factor: float = 1.0
     roughness_factor: float = 1.0
-    base_color_texture: Optional[TextureChannelBinding] = None
     metallic_roughness_texture: Optional[TextureChannelBinding] = None
+
     specular_factor: float = 1.0
     specular_color_factor: list[float] = field(default_factory=lambda: [1.0, 1.0, 1.0])
     specular_texture: Optional[TextureChannelBinding] = None
+    
+    clearcoat_factor: float = 0.0
+    clearcoat_roughness_factor: float = 0.0
+    clearcoat_texture: Optional[TextureChannelBinding] = None
+    clearcoat_roughness_texture: Optional[TextureChannelBinding] = None
 
 @dataclass
 class StructuralTexture:

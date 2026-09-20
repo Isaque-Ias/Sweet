@@ -15,6 +15,7 @@ Camera = gameplay.camera.Camera
 GameModel = gameplay.entity.GameModel
 View = gameplay.view.View
 Visual = gameplay.visual.Visual
+PBRMaterial = gameplay.material.PBRMaterial
 UpdatePolicy = gameplay.view.UpdatePolicy
 WindowSurface = plataform.display.window.window.WindowSurface  # type: ignore
 

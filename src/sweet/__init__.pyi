@@ -15,6 +15,7 @@ from .gameplay.camera import Camera as Camera
 from .gameplay.view import View as View
 from .gameplay.view import UpdatePolicy as UpdatePolicy
 from .gameplay.visual import Visual as Visual
+from .gameplay.material import PBRMaterial as PBRMaterial
 GameModel = gameplay.entity.GameModel
 from .core import linalg as linalg
 

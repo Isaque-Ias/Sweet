@@ -17,7 +17,8 @@ class SkyBox(Graph):
             geometry = _PASSES / "cubemap.geom",
         ), PassConfig(
             cull_mode="none",
-            domain=RenderDomain.CUBEMAP
+            domain=RenderDomain.CUBEMAP,
+            render_func=lambda cmd, vdata: cmd.draw(domain="cubemap", vertex_count=36, instance_count=1) # type: ignore
             )
         )
 

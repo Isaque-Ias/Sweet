@@ -1,11 +1,11 @@
 from sweet.graphics.upload import GPUShader
-from typing import Optional, NamedTuple, Any
+from typing import Optional, NamedTuple, Any, Callable
 from ....resources.assets.importer import ImportManager
 from ...upload import UploadManager
 from pathlib import Path
 from collections import defaultdict, deque
 from enum import Enum, auto, IntEnum
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 class MipSelect(IntEnum):
     BASE = 0
@@ -39,6 +39,9 @@ class PassConfig:
     ping_pong: bool = False              # e.g. bloom blur
     ping_pong_iterations: int = 1
     domain: RenderDomain = RenderDomain.SCENE
+    blend_enable: bool = False
+    render_func: Callable[..., Any] = field(default_factory=lambda cmd, vdata: cmd.draw(domain="view", vertex_count=3, instance_count=1)) # type: ignore
+    custom_pass_management: bool = False
 
 class Graph:
     graph: "RenderGraph"

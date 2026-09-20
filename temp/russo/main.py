@@ -1,3 +1,4 @@
+from chunk import generate_terrain
 import math
 import sweet as sw
 from sweet.core.linalg.vector import Vec3
@@ -11,36 +12,28 @@ win1 = sw.Engine.create_window()
 win1.initialize(width=1366, height=768, title="Window 1")
 # win1.fullscreen = True
 
-# assets = sw.Assets.load_assets(r"temp\russo\Untitled.glb")
 assetsm1 = sw.Assets.load_scene(r"temp\russo\pbr_sphere.glb")
-# assets2 = sw.Assets.load_assets(r"temp\russo\progress.glb")
-# assets3 = sw.Assets.load_scene(r"temp\russo\scenario.glb")
-# assets3 = sw.Assets.load_scene(r"temp\russo\scen.glb")
-scene = sw.Scene("scene")
-# first_key = list(assets.meshes.values())[0][0]
-# sec_key = list(assetsm1[0].materials.values())[0]
-
-# i = 0
-# for asset in assets3[0].meshes.values():
-#     i += 1
-#     # if i > 1:
-#     # break
-#     tobj = sw.Entity(f"{i}ok")
-#     tobj.position = tobj.position * .1
-#     tobj.scale = tobj.scale * .1
-#     for prim in asset:
-#         vis = sw.Visual(prim, sec_key)
-#         tobj.attach_visual(vis)
-#     scene.add_entity(tobj)
-
-# ent = sw.Entity("aaaa")
-# ent.attach_visual(sw.Visual(list(assetsm1[0].meshes.values())[0][0], list(assetsm1[0].materials.values())[0]))
-# ent.attach_visual(sw.Visual(list(assetsm1[0].meshes.values())[0][1], list(assetsm1[0].materials.values())[0]))
-# ent.position = Vec3(0, 1, 0)
 scene = assetsm1[1]
-# for entity in assetsm1[1].entities:
-#     ent = entity
-#     scene.add_entity(ent)
+
+material = list(assetsm1[0].materials.values())[0]
+sw.graphics.upload.UploadManager.update_material_factors(material, clearcoat_factor=0)
+
+ent = sw.Entity("aa")
+mat = sw.PBRMaterial("matt")
+mat.base_color_factor = [0, 0, 0, 1]
+mat.clearcoat_factor = 0
+mat.emissive_factor = [1000, 1000, 1000]
+mat.metallic_factor = 0
+mat.roughness_factor = 1
+mat.specular_factor = 0
+mat.clearcoat_roughness_factor = 0
+mat.upload()
+visual = sw.Visual(list(assetsm1[0].meshes.values())[0][0], mat.source_material)
+ent.attach_visual(visual)
+ent.position = Vec3(1, 0, 0)
+scene.add_entity(ent)
+
+# generate_terrain(scene, material)
 
 class Player(sw.GameModel):
     def __init__(self, win: sw.WindowSurface):
@@ -56,8 +49,8 @@ class Player(sw.GameModel):
         self.cam_rot = sw.core.linalg.rotation.EulerAngleXYZ()
 
         self.win = win
-        self.speed = 0.01
-        self.k = 12
+        self.speed = 0.1
+        self.k = 6
         self.acc = self.speed
 
     def main(self):
@@ -143,27 +136,70 @@ skbx = sw.gameplay.skybox.NishitaSkyBox()
 scene.skybox = skbx
 skbx.update(time=18000)
 
-# dummy_volume_configs = [
-#     # {
-#     #     "invWorldMatrix": np.identity(4, dtype=np.float32),
-#     #     "boundsMin": (-20.0, -10.0, -20.0),
-#     #     "boundsMax": (20.0, 10.0, 20.0),
-#     #     "densityScale": 0.85,
-#     #     "absorption": 0.05,
-#     #     "scatteringColor": (0.9, 0.95, 1.0, 1.0),  # Slightly bluish fog
-#     #     "noiseHandle": (1, 0)                       # Bindless texture handle for 3D noise
-#     # },
-#     {
-#         "invWorldMatrix": np.identity(4, dtype=np.float32),
-#         "boundsMin": (0.0, 0.0, 0.0),
-#         "boundsMax": (100.0, 50.0, 100.0),
-#         "densityScale": 1.5,
-#         "absorption": 0.2,
-#         "scatteringColor": (1.0, 0.8, 0.6, 1.0),  # Warm/dense fog
-#         "noiseHandle": (2, 0)
-#     }
-# ]
-# volume_source = UploadManager.upload_volumes(dummy_volume_configs, max_capacity=16)
+import numpy as np
+
+def make_inv_transform(position, scale):
+    # Scale matrix
+    S = np.diag([scale[0], scale[1], scale[2], 1.0])
+    # Translation matrix
+    T = np.identity(4)
+    T[:3, 3] = position
+    
+    # World matrix = Translation * Scale
+    world_matrix = T @ S
+    # Invert to transform World space -> Local [-1, 1] space
+    return np.linalg.inv(world_matrix).astype(np.float32)
+
+volume_data = [
+    # {
+    #     "type": 0,                             # VOLUME_TYPE_GLOBAL_HEIGHT
+    #     "color": (0.8, 0.85, 0.9, 0.05),       # Tint (RGB) + Base Density (A)
+    #     "phase_g": 0.2,                        # Mild forward scattering
+    #     "height_falloff": 0.15,               # Density drops with height
+    #     "ground_level": 0.0,                   # Fog starts at Y = 0.0
+    #     "absorption": 0.01,                    # Light attenuation
+    # },
+    
+    # Volume 1: Box-bounded Fog (e.g., localized smoke in a room)
+    # {
+    #     "type": 1,                             # VOLUME_TYPE_BOX
+    #     "inv_transform": make_inv_transform(
+    #         position=(0.0, 15.0, 0.0), 
+    #         scale=(40.0, 10.0, 40.0)          # Large sky volume
+    #     ),
+    #     "color": (0.95, 0.95, 1.0, 4.0),      # Dense white/blue tint
+    #     "phase_g": 0.5,                       # Strong forward rim lighting
+    #     "absorption": 0.05,
+    #     "cloud_params": (
+    #         0.05,                             # detail_scale: controls wisp size
+    #         0.2,                              # anim_speed: drift velocity
+    #         0.15,                             # soft_edge: feathering bound margin [0..0.5]
+    #         0.0
+    #     )
+    # }
+    # Volume 2: Spherical Fog (e.g., localized magical orb or aura)
+    # {
+    #     "type": 2,                             # VOLUME_TYPE_SPHERE
+    #     "inv_transform": make_inv_transform(
+    #         position=(-4.0, 1.0, 12.0), 
+    #         scale=(2.5, 2.5, 2.5)              # Radius = 2.5 units
+    #     ),
+    #     "color": (0.1, 0.9, 0.4, 0.8),         # Glowing green tint
+    #     "phase_g": -0.3,                       # Backwards scattering
+    #     "height_falloff": 0.0,
+    #     "ground_level": 0.0,
+    #     "absorption": 0.05,
+    # }
+]
+
+from sweet.graphics.upload import UploadManager
+gpu_source = UploadManager.upload_volumes(
+    volume_configs=volume_data,
+    max_capacity=16
+)
+
+print(f"Uploaded {gpu_source.volume_count} volumes successfully.")
+print(f"SSBO Buffer View Index: {gpu_source.volume_view.buffer_index}")
 
 scene.activate()
 

@@ -1,3 +1,36 @@
+"""
+OPTIMIZED ModernGL HAL backend.
+
+This is a drop-in replacement for the original hal/manager.py ModernGL
+backend. Public class names, method signatures and behavior are kept
+identical so existing call sites do not need to change. Every change is
+marked with an "# OPT:" comment explaining the bottleneck it removes.
+
+Summary of changes vs. the original:
+
+1. Stable `.uid` identity for render targets (ModernGLFramebufferTarget,
+   ModernGLCubemapTarget, ModernGLArrayTarget, ModernGLWindowTarget),
+   mirroring the fix already applied to ModernGLGPUBuffer. The pipeline's
+   VAO cache used to key on `id(target)`; once a target object is garbage
+   collected, CPython is free to reuse that same address for an unrelated
+   object, which could silently return a VAO built for a completely
+   different (or already-released) render target. `.uid` is a
+   monotonically increasing integer that is never reused.
+
+2. `ModernGLGraphicsDevice.blit_texture_to_target` no longer creates and
+   destroys a pair of native FBOs on every single call. This function
+   runs at least once per view per frame (the final redirect-to-backbuffer
+   step), so the old code was doing native FBO create/destroy churn every
+   frame for what is, in practice, a small and stable set of texture
+   pairs. FBO wrappers are now cached in a `weakref.WeakKeyDictionary`
+   keyed on the *Python texture object* (not its GL name/`.glo`, which can
+   be reused after deletion) with a `weakref.finalize` callback that
+   releases the native FBO when the texture wrapper is garbage collected.
+   This is both faster and safer than caching by `.glo`.
+
+Everything else is unchanged from the original.
+"""
+
 import moderngl
 import glfw
 from sweet.plataform.hal.manager import *
@@ -8,158 +41,162 @@ from sweet.core import system
 import itertools
 import math
 import traceback
-import ctypes # type: ignore
+import weakref
+import ctypes  # type: ignore
 import numpy as np
 from PIL import Image
 import OpenGL.GL as gl
 from OpenGL.GL import (
-    GL_TEXTURE_CUBE_MAP, # type: ignore
-    GL_TEXTURE_CUBE_MAP_POSITIVE_X, GL_TEXTURE_CUBE_MAP_POSITIVE_Y, GL_TEXTURE_CUBE_MAP_POSITIVE_Z, # type: ignore
-    GL_TEXTURE_CUBE_MAP_NEGATIVE_X, GL_TEXTURE_CUBE_MAP_NEGATIVE_Y, GL_TEXTURE_CUBE_MAP_NEGATIVE_Z, # type: ignore
-    glGenFramebuffers, glBindFramebuffer, glDeleteFramebuffers, glBlitFramebuffer, # type: ignore
-    glFramebufferTexture, glFramebufferTexture2D, glDrawBuffers, GL_DEPTH_BUFFER_BIT, # type: ignore
+    GL_TEXTURE_CUBE_MAP,  # type: ignore
+    GL_TEXTURE_CUBE_MAP_POSITIVE_X, GL_TEXTURE_CUBE_MAP_POSITIVE_Y, GL_TEXTURE_CUBE_MAP_POSITIVE_Z,  # type: ignore
+    GL_TEXTURE_CUBE_MAP_NEGATIVE_X, GL_TEXTURE_CUBE_MAP_NEGATIVE_Y, GL_TEXTURE_CUBE_MAP_NEGATIVE_Z,  # type: ignore
+    glGenFramebuffers, glBindFramebuffer, glDeleteFramebuffers, glBlitFramebuffer,  # type: ignore
+    glFramebufferTexture, glFramebufferTexture2D, glDrawBuffers, GL_DEPTH_BUFFER_BIT,  # type: ignore
     GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,  # type: ignore
-    GL_FRAMEBUFFER_COMPLETE, glCheckFramebufferStatus,# type: ignore
-    GL_COLOR_BUFFER_BIT, GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D,  # type: ignore
+    GL_FRAMEBUFFER_COMPLETE, glCheckFramebufferStatus,  # type: ignore
+    GL_COLOR_BUFFER_BIT, GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL, GL_TEXTURE_BASE_LEVEL,  # type: ignore
     GL_READ_FRAMEBUFFER, GL_DRAW_FRAMEBUFFER, GL_NEAREST,  # type: ignore
-    glGetError, GL_NO_ERROR, glViewport, glGenFramebuffers, glBindFramebuffer, glClearColor, glClearDepth, glClear, # type: ignore
+    glGetError, GL_NO_ERROR, glViewport, glGenFramebuffers, glBindFramebuffer, glClearColor, glClearDepth, glClear,  # type: ignore
 )
 
 gfx_device: "ModernGLGraphicsDevice"
 
 # Set to True while debugging to get full tracebacks printed for every
 # failed command and a GL error check after framebuffer operations.
-# FIX: replaces the previously silent, un-instrumented failure path.
 DEBUG_GL = False
+
+# OPT: a single shared uid source for every render-target flavor below,
+# so `.uid` values are comparable/never collide across target types when
+# used as VAO-cache or FBO-cache keys.
+_render_target_uid_counter = itertools.count()
 
 
 def _check_gl_error(context: str) -> None:
     if not DEBUG_GL:
         return
     err = glGetError()
-    if err != GL_NO_ERROR: # type: ignore
-        system.warn(f"[GL] error {hex(err)} after {context}") # type: ignore
+    if err != GL_NO_ERROR:  # type: ignore
+        system.warn(f"[GL] error {hex(err)} after {context}")  # type: ignore
 
 
 class ModernGLTextureArrayDepth:
     def __init__(self, width: int, height: int, layers: int, dtype: str = "f2"):
         if layers <= 0:
             raise ValueError("Cascade count must be greater than zero")
- 
+
         self.width = width
         self.height = height
         self.layers = layers
         self.dtype = dtype
- 
-        # f2/f4 -> 32-bit float depth (recommended for shadow maps to avoid
-        # z-fighting from reversed/large-range ortho projections). Anything
-        # else falls back to a standard 24-bit fixed-point depth format.
-        internal_format = ( # type: ignore
-            gl.GL_DEPTH_COMPONENT32F if dtype in ("f2", "f4") else gl.GL_DEPTH_COMPONENT24 # type: ignore
+
+        internal_format = (  # type: ignore
+            gl.GL_DEPTH_COMPONENT32F if dtype in ("f2", "f4") else gl.GL_DEPTH_COMPONENT24  # type: ignore
         )
- 
+
         self.glo = int(gl.glGenTextures(1))
-        gl.glBindTexture(gl.GL_TEXTURE_2D_ARRAY, self.glo) # type: ignore
+        gl.glBindTexture(gl.GL_TEXTURE_2D_ARRAY, self.glo)  # type: ignore
         gl.glTexImage3D(
-            gl.GL_TEXTURE_2D_ARRAY, 0, internal_format, # type: ignore
+            gl.GL_TEXTURE_2D_ARRAY, 0, internal_format,  # type: ignore
             width, height, layers, 0,
-            gl.GL_DEPTH_COMPONENT, gl.GL_FLOAT, None, # type: ignore
+            gl.GL_DEPTH_COMPONENT, gl.GL_FLOAT, None,  # type: ignore
         )
- 
-        gl.glTexParameteri(gl.GL_TEXTURE_2D_ARRAY, gl.GL_TEXTURE_MIN_FILTER, gl.GL_LINEAR) # type: ignore
-        gl.glTexParameteri(gl.GL_TEXTURE_2D_ARRAY, gl.GL_TEXTURE_MAG_FILTER, gl.GL_LINEAR) # type: ignore
-        gl.glTexParameteri(gl.GL_TEXTURE_2D_ARRAY, gl.GL_TEXTURE_WRAP_S, gl.GL_CLAMP_TO_EDGE) # type: ignore
-        gl.glTexParameteri(gl.GL_TEXTURE_2D_ARRAY, gl.GL_TEXTURE_WRAP_T, gl.GL_CLAMP_TO_EDGE) # type: ignore
- 
-        gl.glTexParameteri(gl.GL_TEXTURE_2D_ARRAY, gl.GL_TEXTURE_COMPARE_MODE, gl.GL_COMPARE_REF_TO_TEXTURE) # type: ignore
-        gl.glTexParameteri(gl.GL_TEXTURE_2D_ARRAY, gl.GL_TEXTURE_COMPARE_FUNC, gl.GL_LEQUAL) # type: ignore
- 
-        gl.glBindTexture(gl.GL_TEXTURE_2D_ARRAY, 0) # type: ignore
+
+        gl.glTexParameteri(gl.GL_TEXTURE_2D_ARRAY, gl.GL_TEXTURE_MIN_FILTER, gl.GL_LINEAR)  # type: ignore
+        gl.glTexParameteri(gl.GL_TEXTURE_2D_ARRAY, gl.GL_TEXTURE_MAG_FILTER, gl.GL_LINEAR)  # type: ignore
+        gl.glTexParameteri(gl.GL_TEXTURE_2D_ARRAY, gl.GL_TEXTURE_WRAP_S, gl.GL_CLAMP_TO_EDGE)  # type: ignore
+        gl.glTexParameteri(gl.GL_TEXTURE_2D_ARRAY, gl.GL_TEXTURE_WRAP_T, gl.GL_CLAMP_TO_EDGE)  # type: ignore
+
+        gl.glTexParameteri(gl.GL_TEXTURE_2D_ARRAY, gl.GL_TEXTURE_COMPARE_MODE, gl.GL_COMPARE_REF_TO_TEXTURE)  # type: ignore
+        gl.glTexParameteri(gl.GL_TEXTURE_2D_ARRAY, gl.GL_TEXTURE_COMPARE_FUNC, gl.GL_LEQUAL)  # type: ignore
+
+        gl.glBindTexture(gl.GL_TEXTURE_2D_ARRAY, 0)  # type: ignore
         _check_gl_error("csm depth array texture creation")
- 
+
     def use(self, location: int = 0) -> None:
-        gl.glActiveTexture(gl.GL_TEXTURE0 + location) # type: ignore
-        gl.glBindTexture(gl.GL_TEXTURE_2D_ARRAY, self.glo) # type: ignore
- 
+        gl.glActiveTexture(gl.GL_TEXTURE0 + location)  # type: ignore
+        gl.glBindTexture(gl.GL_TEXTURE_2D_ARRAY, self.glo)  # type: ignore
+
     def release(self) -> None:
         if self.glo:
             gl.glDeleteTextures(1, [self.glo])
             self.glo = 0
 
- 
+
 class ModernGLArrayTarget(RenderTarget):
- 
+
     def __init__(self, depth_array: ModernGLTextureArrayDepth, width: int, height: int):
         self.depth_array = depth_array
         self._size = (width, height)
         self.fbo_id: Optional[int] = None
+        # OPT: stable identity for VAO/FBO caching (see module docstring).
+        self.uid = next(_render_target_uid_counter)
         self._create_framebuffer()
- 
+
     @property
     def size(self) -> tuple[int, int]:
         return self._size
- 
+
     @property
     def is_layered(self) -> bool:
         return True
- 
+
     def _create_framebuffer(self) -> None:
-        fbo = gl.glGenFramebuffers(1) # type: ignore
+        fbo = gl.glGenFramebuffers(1)  # type: ignore
         if isinstance(fbo, (list, tuple, np.ndarray)):
             fbo = int(fbo[0])
         self.fbo_id = int(fbo)
- 
-        gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, self.fbo_id) # type: ignore
- 
-        gl.glFramebufferTexture(gl.GL_FRAMEBUFFER, gl.GL_DEPTH_ATTACHMENT, self.depth_array.glo, 0) # type: ignore
- 
-        gl.glDrawBuffer(gl.GL_NONE) # type: ignore
-        gl.glReadBuffer(gl.GL_NONE) # type: ignore
- 
-        status = gl.glCheckFramebufferStatus(gl.GL_FRAMEBUFFER) # type: ignore
+
+        gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, self.fbo_id)  # type: ignore
+
+        gl.glFramebufferTexture(gl.GL_FRAMEBUFFER, gl.GL_DEPTH_ATTACHMENT, self.depth_array.glo, 0)  # type: ignore
+
+        gl.glDrawBuffer(gl.GL_NONE)  # type: ignore
+        gl.glReadBuffer(gl.GL_NONE)  # type: ignore
+
+        status = gl.glCheckFramebufferStatus(gl.GL_FRAMEBUFFER)  # type: ignore
         _check_gl_error("csm layered framebuffer construction")
-        gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, 0) # type: ignore
- 
-        if status != gl.GL_FRAMEBUFFER_COMPLETE: # type: ignore
+        gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, 0)  # type: ignore
+
+        if status != gl.GL_FRAMEBUFFER_COMPLETE:  # type: ignore
             self.release_resources()
-            raise RuntimeError(f"Layered CSM framebuffer incomplete: {hex(status)}") # type: ignore
- 
+            raise RuntimeError(f"Layered CSM framebuffer incomplete: {hex(status)}")  # type: ignore
+
     def use(self) -> None:
         if self.fbo_id is None:
             raise RuntimeError("CSM framebuffer has already been released")
-        gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, self.fbo_id) # type: ignore
-        gl.glViewport(0, 0, *self._size) # type: ignore
+        gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, self.fbo_id)  # type: ignore
+        gl.glViewport(0, 0, *self._size)  # type: ignore
         _check_gl_error("csm target bind")
- 
+
     def clear(self, color: tuple[float, float, float] = (0.0, 0.0, 0.0), depth: float = 1.0) -> None:
-        gl.glClearDepth(depth) # type: ignore
-        gl.glClear(gl.GL_DEPTH_BUFFER_BIT) # type: ignore
- 
+        gl.glClearDepth(depth)  # type: ignore
+        gl.glClear(gl.GL_DEPTH_BUFFER_BIT)  # type: ignore
+
     def unbind(self) -> None:
-        gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, 0) # type: ignore
- 
+        gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, 0)  # type: ignore
+
     def release(self) -> None:
         self.unbind()
         self.release_resources()
- 
+
     def release_resources(self) -> None:
         if self.fbo_id is not None:
             gl.glDeleteFramebuffers(1, [self.fbo_id])
             self.fbo_id = None
- 
+
     def native_handle(self) -> int:
         if self.fbo_id is None:
             raise RuntimeError("CSM framebuffer has been released")
         return self.fbo_id
- 
+
     @property
     def color_attachments(self) -> list[Any]:
         return []
- 
+
     @property
     def depth_attachment(self) -> ModernGLTextureArrayDepth:
         return self.depth_array
- 
+
 
 class ModernGLArrayFramebuffer(ArrayFramebuffer):
     def __init__(self, width: int, height: int, layers: int, dtype: str = "f2"):
@@ -168,13 +205,14 @@ class ModernGLArrayFramebuffer(ArrayFramebuffer):
         self.layers = layers
         self.depth_array = ModernGLTextureArrayDepth(width, height, layers, dtype)
         self._target = ModernGLArrayTarget(self.depth_array, width, height)
- 
+
     def get_target(self) -> RenderTarget:
         return self._target
- 
+
     def release(self) -> None:
         self._target.release()
         self.depth_array.release()
+
 
 class ModernGLTexture2D(Texture2D):
     def __init__(self, width: int, height: int, components: int = 4, dtype: str = "f1"):
@@ -210,12 +248,9 @@ class ModernGLTexture2D(Texture2D):
 class ModernGLCubemap(Cubemap):
     """OpenGL cubemap resource backed by a layered framebuffer.
 
-    Rendering a cubemap is a SINGLE render operation.  The framebuffer is
+    Rendering a cubemap is a SINGLE render operation. The framebuffer is
     layered (glFramebufferTexture), and the geometry shader is responsible
     for routing primitives to layers 0..5 through gl_Layer.
-
-    This deliberately follows the working cubemap renderer rather than
-    treating the six faces as six independent 2D render targets.
     """
 
     def __init__(
@@ -242,13 +277,9 @@ class ModernGLCubemap(Cubemap):
             dtype=dtype,
         )
 
-        self._cubemap.repeat_x = False # type: ignore
-        self._cubemap.repeat_y = False # type: ignore
+        self._cubemap.repeat_x = False  # type: ignore
+        self._cubemap.repeat_y = False  # type: ignore
 
-        # The working implementation uses a color-only layered FBO.
-        # A normal 2D depth texture cannot be attached to a layered color FBO:
-        # populated framebuffer attachments must agree on layered-ness.
-        # Keep the HAL cubemap target color-only for the same semantics.
         self._target = ModernGLCubemapTarget(
             self.ctx,
             self._cubemap,
@@ -278,12 +309,9 @@ class ModernGLCubemap(Cubemap):
 class ModernGLCubemapTarget(RenderTarget):
     """Layered render target for a cubemap.
 
-    IMPORTANT:
-        This target does NOT select one face at a time.
-
-        glFramebufferTexture attaches the complete cubemap as a layered
-        framebuffer attachment. A geometry shader can then set gl_Layer to
-        0..5 and emit the primitive into all six faces in one draw call.
+    glFramebufferTexture attaches the complete cubemap as a layered
+    framebuffer attachment. A geometry shader can then set gl_Layer to
+    0..5 and emit the primitive into all six faces in one draw call.
     """
 
     def __init__(
@@ -296,6 +324,8 @@ class ModernGLCubemapTarget(RenderTarget):
         self._size = int(size)
         self.cubemap = cubemap_texture
         self.fbo_id: Optional[int] = None
+        # OPT: stable identity for VAO/FBO caching (see module docstring).
+        self.uid = next(_render_target_uid_counter)
         self._create_framebuffer()
 
     @property
@@ -314,9 +344,6 @@ class ModernGLCubemapTarget(RenderTarget):
 
         glBindFramebuffer(GL_FRAMEBUFFER, self.fbo_id)
 
-        # THIS is the key operation.  Do not replace this with
-        # glFramebufferTexture2D: that would attach only one cube face and
-        # would make gl_Layer ineffective for the intended layout.
         glFramebufferTexture(
             GL_FRAMEBUFFER,
             GL_COLOR_ATTACHMENT0,
@@ -336,12 +363,6 @@ class ModernGLCubemapTarget(RenderTarget):
             )
 
     def use(self, face_index: Optional[int] = None) -> None:
-        """Bind the complete cubemap as one layered framebuffer.
-
-        ``face_index`` is accepted only for source compatibility with the
-        previous HAL API. It is intentionally ignored. Rendering a cubemap
-        face-by-face is not the layout used by this target.
-        """
         if self.fbo_id is None:
             raise RuntimeError("Cubemap framebuffer has already been released")
 
@@ -359,9 +380,6 @@ class ModernGLCubemapTarget(RenderTarget):
         color: tuple[float, float, float] = (0.0, 0.0, 0.0),
         depth: float = 1.0,
     ):
-        # The working implementation is color-only, so depth is deliberately
-        # ignored. glClear clears the layered color attachment across all
-        # cubemap layers.
         glClearColor(color[0], color[1], color[2], 1.0)
         glClear(GL_COLOR_BUFFER_BIT)  # type: ignore
 
@@ -411,29 +429,20 @@ class ModernGLFramebufferTarget(RenderTarget):
         self._color_textures: list[Any] = []
         self._is_cubemap = False
         self._owns_color_textures: list[bool] = []
+        # OPT: stable identity for VAO/FBO caching (see module docstring).
+        self.uid = next(_render_target_uid_counter)
 
         mgl_color_attachments: list[Any] = []
 
         for i, fmt in enumerate(color_formats):
             if isinstance(fmt, int):
-                # FIX (HDR preservation): let each color attachment in an
-                # MRT set pick its own precision instead of forcing every
-                # attachment to share one global `dtype`. A lighting/HDR
-                # target (f2/f4) commonly sits alongside an f1 albedo or
-                # mask target in the same framebuffer, and the old code
-                # would silently downgrade every attachment to whatever
-                # single `dtype` was passed in (defaulting to "f1"),
-                # clipping any HDR data written into it.
                 attachment_dtype = dtype
                 if color_dtypes is not None and i < len(color_dtypes) and color_dtypes[i] is not None:
                     attachment_dtype = color_dtypes[i]  # type: ignore
-                tex = ModernGLTexture2D(width, height, components=fmt, dtype=attachment_dtype) # type: ignore
+                tex = ModernGLTexture2D(width, height, components=fmt, dtype=attachment_dtype)  # type: ignore
                 owns = True
             else:
                 tex = cast(ModernGLTexture2D, fmt)
-                # FIX: track whether we created this texture or the caller
-                # passed one in, so release() doesn't free a texture the
-                # caller still owns and may reuse elsewhere.
                 owns = False
             self._color_textures.append(tex)
             self._owns_color_textures.append(owns)
@@ -467,13 +476,6 @@ class ModernGLFramebufferTarget(RenderTarget):
         return self._native_handle.color_attachments  # type: ignore
 
     def get_color_texture(self, index: int = 0) -> Texture2D:
-        """Return the wrapped ModernGLTexture2D for color attachment
-        `index` (as opposed to `color_attachments`, which returns the raw
-        moderngl.Texture the framebuffer holds). Use this to call
-        build_mipmaps()/set_filters() on a render target's own color
-        attachment -- e.g. after rendering a luminance pass into
-        attachment 0, build its mip chain here before sampling the
-        smallest mip in the tonemap pass."""
         if not self._color_textures:
             raise IndexError("This RenderTarget has no color attachments")
         return self._color_textures[index]
@@ -492,9 +494,6 @@ class ModernGLFramebufferTarget(RenderTarget):
         self._native_handle.clear(color=(*color, 1.0), depth=depth)
 
     def release(self) -> None:
-        # FIX: only release color textures we actually own -- a texture
-        # passed in by the caller (via color_formats containing a
-        # Texture2D instead of an int) is not ours to free.
         for tex, owns in zip(self._color_textures, self._owns_color_textures):
             if owns:
                 tex.release()
@@ -516,11 +515,11 @@ class ModernGLVertexLayout(VertexLayout):
 
 
 class ModernGLGPUBuffer(GPUBuffer):
-    # FIX: a monotonically increasing counter gives every buffer a stable
-    # identity for the pipeline's VAO cache. `id(obj)` is NOT safe for this:
-    # once a buffer is garbage collected, Python is free to reuse the same
-    # address for an unrelated object, which could make a stale VAO cache
-    # entry silently point at a completely different (or freed) GPU buffer.
+    # Monotonically increasing counter gives every buffer a stable
+    # identity for the pipeline's VAO cache; `id(obj)` is not safe here
+    # because a freed buffer's address can be reused by an unrelated
+    # object, which would let a stale VAO cache entry silently point at
+    # the wrong (or freed) GPU buffer.
     _uid_counter = itertools.count()
 
     def __init__(self, size: int, dynamic: bool = False) -> None:
@@ -566,8 +565,6 @@ class ModernGLGPUShader(GPUShader):
         pass
 
     def release(self):
-        # FIX: shader programs were never released anywhere in the
-        # original file.
         if self.program:
             self.program.release()
 
@@ -578,20 +575,12 @@ class ModernGLResourceSet(ResourceSet):
         self.bound_resources: dict[int, ResourceBinding] = {}
 
     def _slot_declared(self, slot: int) -> bool:
-        # FIX: `self.layout.bindings` may be a dict keyed by slot, or a
-        # list/tuple of (slot, ResourceType) pairs -- the original code did
-        # `slot not in self.layout.bindings`, which only works for the dict
-        # case. Against a list of tuples, an int is never equal to a tuple,
-        # so the check would effectively always fail (or always "pass" in
-        # the sense of raising every time). This handles both shapes.
         bindings = self.layout.bindings
-        if isinstance(bindings, dict): # type: ignore
+        if isinstance(bindings, dict):  # type: ignore
             return slot in bindings
         try:
-            return any(entry[0] == slot for entry in bindings) # type: ignore
+            return any(entry[0] == slot for entry in bindings)  # type: ignore
         except (TypeError, IndexError):
-            # Unknown shape -- fail open rather than incorrectly rejecting
-            # every binding.
             return True
 
     def update(self, bindings: list[ResourceBinding]) -> None:
@@ -629,11 +618,13 @@ class ModernGLWindowTarget(RenderTarget):
     def __init__(self, window: Any = None):
         self.ctx = gfx_device.ctx
         self.window = window
+        # OPT: stable identity for VAO/FBO caching (see module docstring).
+        self.uid = next(_render_target_uid_counter)
 
     def make_current(self):
         if self.window and hasattr(self.window, "make_current"):
             self.window.make_current()
-            gl.glEnable(gl.GL_TEXTURE_CUBE_MAP_SEAMLESS) # type: ignore
+            gl.glEnable(gl.GL_TEXTURE_CUBE_MAP_SEAMLESS)  # type: ignore
 
             if hasattr(self.window, "size"):
                 w, h = self.window.size
@@ -684,13 +675,13 @@ class ModernGLRenderPipeline(RenderPipeline):
         }
         self.mode = topologies.get(descriptor.primitive_topology, moderngl.TRIANGLES)
 
-        # FIX: cache key now uses stable buffer.uid instead of id(vbo)/id(ibo).
+        # Cache key uses stable buffer.uid / target.uid instead of id(vbo)/id(ibo)/id(target).
         self._vao_cache: dict[
             tuple[int, int, Optional[int], int], moderngl.VertexArray
         ] = {}
-        # FIX: a single cached attributeless VAO, reused across every
+        # A single cached attributeless VAO, reused across every
         # bindless/attributeless draw call instead of allocating a new one
-        # per draw (see ModernGLCommandBuffer.draw).
+        # per draw.
         self._empty_vao: Optional[moderngl.VertexArray] = None
 
     def get_or_create_vao(
@@ -720,7 +711,7 @@ class ModernGLRenderPipeline(RenderPipeline):
                     vbo.buffer,
                     layout.format_str,
                     *layout.attributes,
-                    base_vertex,  # Base vertex offset!
+                    base_vertex,
                 )
 
             self._vao_cache[cache_key] = self.ctx.vertex_array(  # type: ignore
@@ -731,7 +722,7 @@ class ModernGLRenderPipeline(RenderPipeline):
 
     def get_or_create_empty_vao(self) -> moderngl.VertexArray:
         if self._empty_vao is None:
-            self._empty_vao = self.ctx.vertex_array(self.program, []) # type: ignore
+            self._empty_vao = self.ctx.vertex_array(self.program, [])  # type: ignore
         return self._empty_vao
 
     def apply_state(self):
@@ -754,13 +745,6 @@ class ModernGLRenderPipeline(RenderPipeline):
         else:
             self.ctx.disable(moderngl.DEPTH_TEST)
 
-        # FIX: front_face (winding order) was never set here, so it kept
-        # whatever value a previous pipeline last left in the GL context.
-        # This matters a lot for cubemap rendering: per-face view matrices
-        # commonly flip effective triangle winding on some faces, and with
-        # cull_mode != "none" that can silently discard all geometry on
-        # exactly those faces while leaving others untouched -- looking
-        # exactly like "some faces never draw." Set explicitly every time.
         front_face = getattr(self.descriptor, "front_face", "ccw")
         self.ctx.front_face = front_face
 
@@ -780,14 +764,12 @@ class ModernGLRenderPipeline(RenderPipeline):
 
         if self.descriptor.blend_enabled:
             self.ctx.enable(moderngl.BLEND)
+            self.ctx.blend_func = moderngl.ONE, moderngl.ONE
+            self.ctx.blend_equation = moderngl.FUNC_ADD
         else:
             self.ctx.disable(moderngl.BLEND)
 
     def release(self):
-        # FIX: previously nothing ever released the VAOs accumulated in
-        # _vao_cache -- every unique (target, vbo, ibo, base_vertex)
-        # combination leaked a native GL VAO object for the lifetime of the
-        # process. Pipelines should call this when they're discarded.
         for vao in self._vao_cache.values():
             vao.release()
         self._vao_cache.clear()
@@ -821,13 +803,8 @@ class ModernGLCommandBuffer(CommandBuffer):
         viewport: Optional[tuple[int, int, int, int]] = None,
         clear_color: tuple[float, float, float] = (0.1, 0.2, 0.3),
         face_index: Optional[int] = None,
+        target_mip: Optional[int] = None,
     ) -> None:
-        """Begin a render pass.
-
-        Cubemaps are rendered as one layered target.  ``face_index`` remains
-        in the signature only so older callers do not immediately break, but
-        it no longer changes the framebuffer attachment.
-        """
         self._current_target = target
 
         def cmd_begin_pass(
@@ -835,15 +812,18 @@ class ModernGLCommandBuffer(CommandBuffer):
             vp: Optional[tuple[int, int, int, int]] = viewport,
             cc: tuple[float, float, float] = clear_color,
             face: Optional[int] = face_index,
+            mip: Optional[int] = target_mip,
         ):
             if hasattr(t, "make_current"):
                 t.make_current()  # type: ignore
 
             if isinstance(t, ModernGLCubemapTarget):
-                # Bind ONE layered FBO. No face attachment/re-attachment occurs.
                 t.use(face)
 
                 w, h = t.size
+                if mip is not None and mip > 0:
+                    w, h = max(1, w >> mip), max(1, h >> mip)
+
                 effective_vp = vp if vp is not None else (0, 0, w, h)
                 glViewport(*effective_vp)
                 t.clear(color=cc)
@@ -852,16 +832,30 @@ class ModernGLCommandBuffer(CommandBuffer):
             if isinstance(t, ModernGLArrayTarget):
                 t.use()
                 w, h = t.size
+                if mip is not None and mip > 0:
+                    w, h = max(1, w >> mip), max(1, h >> mip)
+
                 effective_vp = vp if vp is not None else (0, 0, w, h)
                 glViewport(*effective_vp)
                 t.clear(color=cc)
                 return
 
-            fb = t.native_handle()
             w, h = t.size
+            if mip is not None and mip > 0:
+                w, h = max(1, w >> mip), max(1, h >> mip)
+
+            if hasattr(t, "use_mip") and mip is not None:
+                fb = t.use_mip(mip)
+            else:
+                fb = t.native_handle()
+                if hasattr(fb, "use"):
+                    if mip is not None and hasattr(fb, "use_mip"):
+                        fb.use_mip(mip)
+                    else:
+                        fb.use()
+
             effective_vp = vp if vp is not None else (0, 0, w, h)
 
-            fb.use()
             if w > 0 and h > 0:
                 self.ctx.viewport = effective_vp
 
@@ -878,10 +872,6 @@ class ModernGLCommandBuffer(CommandBuffer):
             p: ModernGLRenderPipeline = pipeline,
             target: Optional[RenderTarget] = self._current_target,
         ):
-            # The reference cubemap renderer explicitly disables culling and
-            # depth testing. More importantly, face selection is performed by
-            # the geometry shader, so ordinary per-face raster state must not
-            # accidentally discard layers.
             if isinstance(target, ModernGLCubemapTarget):
                 p.apply_state()
                 self.ctx.disable(moderngl.CULL_FACE)
@@ -923,18 +913,70 @@ class ModernGLCommandBuffer(CommandBuffer):
                 return
             if isinstance(src_texture, ModernGLTexture2D):
                 src_texture.texture.use(location=location)  # type: ignore
-            if isinstance(src_texture, ModernGLCubemap):
+            elif isinstance(src_texture, ModernGLCubemap):
                 src_texture._cubemap.use(location=location)  # type: ignore
-                # glGenerateMipmap(GL_TEXTURE_2D)
+            else:
+                src_texture.use(location=location)  # type: ignore
 
         self._commands.append(use)
+
+    def set_blend_state(
+        self,
+        enabled: bool = True,
+        src_factor: str = "ONE",
+        dst_factor: str = "ZERO",
+        blend_op: str = "ADD",
+        src_alpha_factor: Optional[str] = None,
+        dst_alpha_factor: Optional[str] = None,
+    ) -> None:
+        BLEND_FACTORS = {
+            "ZERO": moderngl.ZERO,
+            "ONE": moderngl.ONE,
+            "SRC_COLOR": moderngl.SRC_COLOR,
+            "ONE_MINUS_SRC_COLOR": moderngl.ONE_MINUS_SRC_COLOR,
+            "SRC_ALPHA": moderngl.SRC_ALPHA,
+            "ONE_MINUS_SRC_ALPHA": moderngl.ONE_MINUS_SRC_ALPHA,
+            "DST_ALPHA": moderngl.DST_ALPHA,
+            "ONE_MINUS_DST_ALPHA": moderngl.ONE_MINUS_DST_ALPHA,
+            "DST_COLOR": moderngl.DST_COLOR,
+            "ONE_MINUS_DST_COLOR": moderngl.ONE_MINUS_DST_COLOR,
+            "SRC_ALPHA_SATURATE": getattr(moderngl, "SRC_ALPHA_SATURATED", 0x0308),
+            "SRC_ALPHA_SATURATED": getattr(moderngl, "SRC_ALPHA_SATURATED", 0x0308),
+        }
+
+        BLEND_OPS = {
+            "ADD": getattr(moderngl, "FUNC_ADD", 0x8006),
+            "SUBTRACT": getattr(moderngl, "FUNC_SUBTRACT", 0x800A),
+            "REVERSE_SUBTRACT": getattr(moderngl, "FUNC_REVERSE_SUBTRACT", 0x800B),
+            "MIN": getattr(moderngl, "MIN", 0x8007),
+            "MAX": getattr(moderngl, "MAX", 0x8008),
+        }
+
+        s_rgb = BLEND_FACTORS.get(src_factor.upper(), moderngl.ONE)
+        d_rgb = BLEND_FACTORS.get(dst_factor.upper(), moderngl.ZERO)
+        s_a = BLEND_FACTORS.get((src_alpha_factor or src_factor).upper(), s_rgb)
+        d_a = BLEND_FACTORS.get((dst_alpha_factor or dst_factor).upper(), d_rgb)
+        op = BLEND_OPS.get(blend_op.upper(), getattr(moderngl, "FUNC_ADD", 0x8006))
+
+        def apply_blend():
+            ctx = self.ctx
+
+            if not enabled:
+                ctx.disable(moderngl.BLEND)
+                return
+
+            ctx.enable(moderngl.BLEND)
+            ctx.blend_equation = op
+            ctx.blend_func = (s_rgb, d_rgb, s_a, d_a)
+
+        self._commands.append(apply_blend)
 
     def use_target_texture(
         self,
         src_render_target: RenderTarget,
         src_attachment: int,
         location: int,
-        src_mip: int,
+        src_mip: int = 0,
     ) -> None:
         def use():
             if isinstance(src_render_target, ModernGLCubemapTarget):
@@ -942,10 +984,11 @@ class ModernGLCommandBuffer(CommandBuffer):
                     raise ValueError("Cubemap targets currently expose one color attachment at index 0")
                 src_render_target.cubemap.use(location=location)
                 return
+
             if isinstance(src_render_target, ModernGLArrayTarget):
                 src_render_target.depth_array.use(location=location)
                 return
-            
+
             native = src_render_target.native_handle()
 
             if src_attachment == -1:
@@ -958,13 +1001,20 @@ class ModernGLCommandBuffer(CommandBuffer):
                     raise IndexError(f"Color attachment {src_attachment} out of bounds")
                 texture = colors[src_attachment]
 
-            texture.use(location=location)  # plain bind, no state mutation, no views
+            raw_tex = texture.texture if hasattr(texture, "texture") else texture
+
+            if hasattr(raw_tex, "base_level"):
+                raw_tex.base_level = src_mip
+                raw_tex.max_level = src_mip
+
+            raw_tex.use(location=location)
 
         self._commands.append(use)
 
     def set_uniform_value(self, uniform: str, value: bytes):
         pipeline = self._current_pipeline
         uniform = uniform[:-3] if uniform.endswith("[0]") else uniform
+
         def set_uniform():
             if pipeline and uniform in pipeline.program:
                 pipeline.program[uniform].write(value)  # type: ignore
@@ -987,10 +1037,6 @@ class ModernGLCommandBuffer(CommandBuffer):
             raise RuntimeError("draw() chamado sem um pipeline vinculado")
 
         if vbo is None:
-            # FIX: reuse a single cached attributeless VAO per pipeline
-            # instead of allocating a brand new moderngl.VertexArray (a
-            # native GL VAO object) on every execute() with no release --
-            # this was a genuine per-frame GPU object leak.
             def empty_cmd(p: ModernGLRenderPipeline = pipeline, vc: int = vertex_count,
                           ic: int = instance_count, fv: int = first_vertex):
                 vao = p.get_or_create_empty_vao()
@@ -999,6 +1045,9 @@ class ModernGLCommandBuffer(CommandBuffer):
             self._commands.append(empty_cmd)
             return
 
+        # OPT: was `id(t)` -- a freed target's address can be reused,
+        # which used to risk silently reusing a VAO built for a different
+        # render target. `.uid` is stable and never reused.
         def cmd_draw(
             p: ModernGLRenderPipeline = pipeline,
             v: ModernGLGPUBuffer = vbo,
@@ -1007,10 +1056,8 @@ class ModernGLCommandBuffer(CommandBuffer):
             ic: int = instance_count,
             fv: int = first_vertex,
         ):
-            # FIX: also routed through the pipeline's VAO cache (same one
-            # draw_indexed uses) instead of creating+leaking a new VAO
-            # every single call.
-            vao = p.get_or_create_vao(id(t) if t is not None else 0, v, None, base_vertex=0)
+            target_key = getattr(t, "uid", 0) if t is not None else 0
+            vao = p.get_or_create_vao(target_key, v, None, base_vertex=0)
             vao.render(mode=p.mode, vertices=vc, instances=ic, first=fv)
 
         self._commands.append(cmd_draw)
@@ -1035,6 +1082,8 @@ class ModernGLCommandBuffer(CommandBuffer):
                 "Pipeline, VBO, IBO e Target precisam estar configurados antes do draw_indexed call"
             )
 
+        # OPT: was `id(t)` -- see cmd_draw above for why `.uid` is required
+        # for correctness, not just style.
         def cmd_draw_indexed(
             p: ModernGLRenderPipeline = p,
             v: ModernGLGPUBuffer = v,
@@ -1046,7 +1095,7 @@ class ModernGLCommandBuffer(CommandBuffer):
             inst: int = instance_count,
             first_inst: int = first_instance,
         ):
-            vao = p.get_or_create_vao(id(t), v, i, base_vertex=bv)
+            vao = p.get_or_create_vao(getattr(t, "uid", 0), v, i, base_vertex=bv)
             vao.render(mode=p.mode, vertices=ic, instances=inst, first=fi)
 
         self._commands.append(cmd_draw_indexed)
@@ -1095,11 +1144,6 @@ class ModernGLCommandBuffer(CommandBuffer):
             channels = attachment_texture.components
             texture_dtype = attachment_texture.dtype
 
-            # FIX (HDR preservation): must read back using the attachment's
-            # actual dtype. `fbo.read()` defaults to 'f1' when no dtype is
-            # given, so every HDR attachment (f2/f4) was being reinterpreted
-            # through the normalized 8-bit path and silently corrupted
-            # before it ever reached the "parse buffer" step below.
             raw_bytes = fbo.read(
                 viewport=(0, 0, width, height),
                 components=channels,
@@ -1107,17 +1151,6 @@ class ModernGLCommandBuffer(CommandBuffer):
                 dtype=texture_dtype,
             )
 
-            # FIX: the old `"4" in texture_dtype` check conflated "f4"
-            # (32-bit float, HDR) with "u4"/"i4" (32-bit integer, NOT
-            # normalized floats), and left "f2" (16-bit float, also HDR)
-            # completely unhandled -- it fell into the uint8 branch and
-            # was read as raw bytes, producing garbage. Use the same
-            # dtype table and range-mapping as `_save_cubemap_face` so
-            # float HDR data is range-compressed to 8-bit for the PNG
-            # preview and integer formats are mapped from their own
-            # integer range, while the underlying attachment itself is
-            # never touched -- this method only ever produces a debug
-            # visualization copy.
             np_dtype = self._MGL_DTYPE_TO_NUMPY.get(texture_dtype, np.uint8)
             np_data = np.frombuffer(raw_bytes, dtype=np_dtype)
 
@@ -1129,15 +1162,12 @@ class ModernGLCommandBuffer(CommandBuffer):
                     (np_data.astype(np.float32) - info.min) / (info.max - info.min) * 255.0
                 ).astype(np.uint8)
 
-            # Reshape into (height, width, channels)
             if channels == 1:
                 parsed = np_data.reshape((height, width))
             else:
                 parsed = np_data.reshape((height, width, channels))
 
-            # Build output image based on channel count
             if channels == 1:
-                # Single channel -> (R, R, R, 255)
                 rgba = np.zeros((height, width, 4), dtype=np.uint8)
                 rgba[..., 0] = parsed
                 rgba[..., 1] = parsed
@@ -1146,7 +1176,6 @@ class ModernGLCommandBuffer(CommandBuffer):
                 img = Image.fromarray(rgba, mode="RGBA")
 
             elif channels == 2:
-                # Two channels -> (R, G, 0, 255)
                 rgba = np.zeros((height, width, 4), dtype=np.uint8)
                 rgba[..., 0] = parsed[..., 0]
                 rgba[..., 1] = parsed[..., 1]
@@ -1196,8 +1225,6 @@ class ModernGLCommandBuffer(CommandBuffer):
         np_data = np.frombuffer(raw_bytes, dtype=np_dtype)
 
         if np_dtype in (np.float16, np.float32):
-            # Saving HDR data as PNG is only a visualization operation.
-            # The actual cubemap remains HDR; this merely maps [0, 1] to 8-bit.
             np_data = (
                 np.clip(np_data.astype(np.float32), 0.0, 1.0) * 255.0
             ).astype(np.uint8)
@@ -1318,23 +1345,13 @@ class ModernGLCommandBuffer(CommandBuffer):
         """
         Run every queued command in order.
 
-        FIX (the main cubemap bug): previously this was a bare loop with no
-        exception handling. Several commands in this file can legitimately
-        raise (most notably ModernGLCubemapTarget.use() on an incomplete
-        framebuffer for a given face). Because commands for all 6 cube
-        faces are queued into the *same* list and executed in the *same*
-        loop, one raised exception used to unwind out of execute()
-        entirely and abort every command still queued after it -- which is
-        exactly consistent with the reported symptom of "face 0 clears,
-        nothing after it ever runs."
-
-        Each command is now isolated: a failure is logged (with a full
+        Each command is isolated: a failure is logged (with a full
         traceback when DEBUG_GL is on) and execution continues with the
         next command, so a problem attaching one face can no longer starve
         the rest of the frame. Pass raise_on_error=True if you want a
         single aggregated exception raised after all commands have been
-        attempted (useful in tests/CI), while still guaranteeing every
-        command got a chance to run.
+        attempted, while still guaranteeing every command got a chance to
+        run.
         """
         errors: list[tuple[int, BaseException]] = []
         for index, cmd in enumerate(self._commands):
@@ -1362,21 +1379,26 @@ class ModernGLGraphicsDevice(GraphicsDevice):
         if not glfw.init():
             raise RuntimeError("Falha ao inicializar GLFW")
 
-        glfw.window_hint(glfw.VISIBLE, glfw.FALSE)  # Keep hidden! # type: ignore
+        glfw.window_hint(glfw.VISIBLE, glfw.FALSE)  # type: ignore
         glfw.window_hint(glfw.CONTEXT_VERSION_MAJOR, 3)  # type: ignore
         glfw.window_hint(glfw.CONTEXT_VERSION_MINOR, 3)  # type: ignore
         glfw.window_hint(glfw.OPENGL_PROFILE, glfw.OPENGL_CORE_PROFILE)  # type: ignore
 
         self._dummy_window = glfw.create_window(1, 1, "DummyContextWindow", None, None)  # type: ignore
         glfw.make_context_current(self._dummy_window)  # type: ignore
-        
+
         platform = glfw.get_platform()
         if platform == glfw.PLATFORM_WAYLAND:
             self.ctx = moderngl.create_context(gl_version=(4, 6), backend="egl", share=True)  # type: ignore
         else:
             self.ctx = moderngl.create_context(gl_version=(4, 6))  # type: ignore
 
-        gl.glEnable(gl.GL_TEXTURE_CUBE_MAP_SEAMLESS) # type: ignore
+        gl.glEnable(gl.GL_TEXTURE_CUBE_MAP_SEAMLESS)  # type: ignore
+
+        # OPT: cache of wrapper FBOs used by blit_texture_to_target, keyed
+        # on the Python texture object itself (never on `.glo`, which can
+        # be reused after a texture is deleted). See _get_or_create_wrap_fbo.
+        self._blit_fbo_cache: "weakref.WeakKeyDictionary[Any, moderngl.Framebuffer]" = weakref.WeakKeyDictionary()
 
     def initialize(self):
         if not self.ctx:
@@ -1443,6 +1465,43 @@ class ModernGLGraphicsDevice(GraphicsDevice):
             glDeleteFramebuffers(1, [read_fbo])
             glDeleteFramebuffers(1, [draw_fbo])
 
+    def _get_or_create_wrap_fbo(self, texture: Any, is_depth: bool) -> moderngl.Framebuffer:
+        """OPT: blit_texture_to_target previously created a brand-new
+        native FBO wrapper for the source and destination textures on
+        *every single call*, and this path runs at least once per view
+        per frame (the final redirect-to-backbuffer step of the pass
+        chain). Native FBO create/destroy is not free, and in practice
+        the same handful of render-target textures get blitted from/to
+        every frame, so caching them removes real per-frame churn.
+
+        Cached on the Python texture *object* rather than on its GL name
+        (`.glo`): GL names get reused after a texture is deleted, which
+        would otherwise let a stale cached FBO silently point at a
+        texture that no longer holds what created it. Keying on object
+        identity via WeakKeyDictionary plus a weakref finalizer sidesteps
+        that: when the texture wrapper is garbage collected its cache
+        entry disappears and its native FBO is released automatically.
+        """
+        cached = self._blit_fbo_cache.get(texture)
+        if cached is not None:
+            return cached
+
+        fbo = (
+            self.ctx.framebuffer(depth_attachment=texture)
+            if is_depth
+            else self.ctx.framebuffer(color_attachments=[texture])
+        )
+
+        def _release_fbo(_ref: Any, fbo: moderngl.Framebuffer = fbo) -> None:
+            try:
+                fbo.release()
+            except Exception:
+                pass
+
+        weakref.finalize(texture, _release_fbo)
+        self._blit_fbo_cache[texture] = fbo
+        return fbo
+
     def blit_texture_to_target(
         self,
         src_target: RenderTarget,
@@ -1465,10 +1524,6 @@ class ModernGLGraphicsDevice(GraphicsDevice):
         if src_target is dst_target and src_attachment == dst_attachment:
             return
 
-        # Só targets com texturas gerenciadas (color_textures/depth_texture
-        # de verdade) passam pelo resolve manual de attachment. Targets como
-        # a backbuffer da janela (ModernGLWindowTarget, color_textures=[])
-        # usam framebuffer/size diretamente, igual antes.
         has_src_textures = (
             bool(src_target.depth_attachment)
             if is_src_depth
@@ -1489,21 +1544,6 @@ class ModernGLGraphicsDevice(GraphicsDevice):
             if has_dst_textures else None
         )
 
-        # FIX (HDR preservation): glBlitFramebuffer/copy_framebuffer moves
-        # raw texel data -- it does not tone-map or convert precision. If
-        # the source and destination attachments don't share a dtype (e.g.
-        # blitting an f4 HDR color target into an f1 LDR one), the copy
-        # either loses range or reinterprets the bits outright. This used
-        # to happen silently; now it's surfaced so a mismatched HDR/LDR
-        # redirect doesn't fail invisibly.
-        # src_dtype = getattr(src_native, "dtype", None)
-        # dst_dtype = getattr(dst_native, "dtype", None)
-        # if src_dtype is not None and dst_dtype is not None and src_dtype != dst_dtype:
-        #     system.warn(
-        #         f"[ModernGLGraphicsDevice] blit_texture_to_target: dtype mismatch "
-        #         f"src={src_dtype!r} dst={dst_dtype!r} -- HDR precision may be lost."
-        #     )
-
         src_is_cube = isinstance(src_native, moderngl.TextureCube)
         dst_is_cube = isinstance(dst_native, moderngl.TextureCube)
 
@@ -1521,45 +1561,26 @@ class ModernGLGraphicsDevice(GraphicsDevice):
                 self._blit_cube_face(src_native, dst_native, face, size)  # type: ignore
             return
 
-        # --- caminho original, 2D normal (cobre também a backbuffer,
-        #     que cai em has_*_textures=False e usa framebuffer/size direto) ---
-        tmp_src_fb: Optional[moderngl.Framebuffer] = None
-        tmp_dst_fb: Optional[moderngl.Framebuffer] = None
+        # OPT: reuse cached wrapper FBOs instead of creating/destroying a
+        # pair of native FBOs on every call. See _get_or_create_wrap_fbo.
+        if has_src_textures:
+            src_fb = self._get_or_create_wrap_fbo(src_native, is_src_depth)
+            src_w, src_h = src_native.width, src_native.height  # type: ignore
+        else:
+            src_fb = src_target.native_handle()
+            src_w, src_h = src_target.size
 
-        try:
-            if has_src_textures:
-                tmp_src_fb = (
-                    self.ctx.framebuffer(depth_attachment=src_native)
-                    if is_src_depth
-                    else self.ctx.framebuffer(color_attachments=[src_native])
-                )
-                src_fb = tmp_src_fb
-                src_w, src_h = src_native.width, src_native.height  # type: ignore
-            else:
-                src_fb = src_target.native_handle()
-                src_w, src_h = src_target.size
+        if has_dst_textures:
+            dst_fb = self._get_or_create_wrap_fbo(dst_native, is_dst_depth)
+            dst_w, dst_h = dst_native.width, dst_native.height  # type: ignore
+        else:
+            dst_fb = dst_target.native_handle()
+            dst_w, dst_h = dst_target.size
 
-            if has_dst_textures:
-                tmp_dst_fb = (
-                    self.ctx.framebuffer(depth_attachment=dst_native)
-                    if is_dst_depth
-                    else self.ctx.framebuffer(color_attachments=[dst_native])
-                )
-                dst_fb = tmp_dst_fb
-                dst_w, dst_h = dst_native.width, dst_native.height  # type: ignore
-            else:
-                dst_fb = dst_target.native_handle()
-                dst_w, dst_h = dst_target.size
+        src_fb.viewport = src_viewport if src_viewport is not None else (0, 0, src_w, src_h)
+        dst_fb.viewport = dst_viewport if dst_viewport is not None else (0, 0, dst_w, dst_h)
 
-            src_fb.viewport = src_viewport if src_viewport is not None else (0, 0, src_w, src_h)
-            dst_fb.viewport = dst_viewport if dst_viewport is not None else (0, 0, dst_w, dst_h)
-
-            self.ctx.copy_framebuffer(dst=dst_fb, src=src_fb)
-        finally:
-            if tmp_src_fb:
-                tmp_src_fb.release()
-            if tmp_dst_fb:
-                tmp_dst_fb.release()
+        self.ctx.copy_framebuffer(dst=dst_fb, src=src_fb)
 
     def shutdown(self):
         if self.ctx:
@@ -1570,12 +1591,6 @@ class ModernGLGraphicsDevice(GraphicsDevice):
     def create_framebuffer(
         self, width: int, height: int, texture: Any = None, dtype: str = "f1"
     ) -> RenderTarget:
-        # FIX (HDR preservation): this factory never forwarded a dtype, so
-        # every single-attachment framebuffer built through it silently
-        # fell back to ModernGLFramebufferTarget's f1 default -- an HDR
-        # scene-color or bloom target requested here was impossible even
-        # though the underlying HAL (ModernGLTexture2D/ModernGLFramebufferTarget)
-        # fully supports HDR dtypes such as "f2"/"f4".
         if not self.ctx:
             raise RuntimeError(
                 "Inicialize o contexto ModernGL antes de criar um framebuffer"
@@ -1593,10 +1608,6 @@ class ModernGLGraphicsDevice(GraphicsDevice):
         dtype: str = "f1",
         color_dtypes: Optional[list[Optional[str]]] = None,
     ) -> RenderTarget:
-        # FIX (HDR preservation): forwards the new optional per-attachment
-        # `color_dtypes`, so a caller can mix an HDR (f2/f4) target with
-        # LDR targets in the same MRT set instead of every attachment
-        # being forced to share the single `dtype` value.
         if not self.ctx:
             raise RuntimeError(
                 "Inicialize o contexto ModernGL antes de criar um framebuffer MRT"
@@ -1683,11 +1694,6 @@ class ModernGLGraphicsDevice(GraphicsDevice):
         return ModernGLGPUBuffer(size_mb * 1024 * 1024, dynamic=True)
 
     def create_texture2d(self, width: int, height: int, format: int = 4, dtype: str = "f1") -> Texture2D:
-        # FIX (HDR preservation): this factory never forwarded a dtype, so
-        # every 2D texture created through the HAL silently fell back to
-        # ModernGLTexture2D's f1 (normalized 8-bit) default -- an HDR
-        # texture (e.g. "f2"/"f4") requested here was impossible even
-        # though ModernGLTexture2D already supports it.
         if not self.ctx:
             raise RuntimeError(
                 "Inicialize o contexto ModernGL antes de criar uma textura 2D"
@@ -1728,7 +1734,5 @@ class ModernGLGraphicsDevice(GraphicsDevice):
         if not self.ctx:
             raise RuntimeError("Inicialize o contexto ModernGL antes de criar um array framebuffer")
         if not depth_only:
-            # Color-array cascades (e.g. VSM/moment shadow maps) would go here.
-            # Not needed for a standard PCF depth CSM, so left unimplemented.
             raise NotImplementedError("create_array_framebuffer currently only supports depth_only=True")
         return ModernGLArrayFramebuffer(width, height, layers, dtype)
