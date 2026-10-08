@@ -1,1 +1,1 @@
-from . import animation, assets, camera, entity, light, scene, view, visual, components, material, skybox # type: ignore
+from . import animation, assets, camera, entity, light, scene, view, visual, components, material, skybox, collision # type: ignore

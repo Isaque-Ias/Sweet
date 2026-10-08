@@ -871,10 +871,14 @@ class PipelineManager:
                 model = visual.source.source_model
                 material = visual.material.id.buffer_index
 
-                pos_range = pos_buf.get_glsl_range(model.positions.buffer_index)  # type: ignore
-                norm_range = norm_buf.get_glsl_range(model.normals.buffer_index)  # type: ignore
-                uv_range = uv_buf.get_glsl_range(model.texcoords.buffer_index)  # type: ignore
-                idx_range = idx_buf.get_glsl_range(model.indices.buffer_index)  # type: ignore
+                pos_range = pos_buf.get_glsl_range(model.positions.buffer_index or 0)  # type: ignore
+                norm_range = norm_buf.get_glsl_range(model.normals.buffer_index or 0)  # type: ignore
+                
+                if model.texcoords is None:
+                    uv_range = (0, 0)
+                else:
+                    uv_range = uv_buf.get_glsl_range(model.texcoords.buffer_index or 0)  # type: ignore
+                idx_range = idx_buf.get_glsl_range(model.indices.buffer_index or 0)  # type: ignore
 
                 max_indices_in_batch = max(max_indices_in_batch, idx_range[1])
 

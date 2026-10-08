@@ -561,6 +561,50 @@ class ImportManager:
         return material_data
 
     @classmethod
+    def _compute_normals(cls, positions: BufferData | None, indices: BufferData | None = None) -> BufferData | None:
+        if positions is None or positions.data is None or len(positions.data) == 0:
+            return None
+
+        pos = np.asarray(positions.data, dtype=np.float32)
+        num_vertices = pos.shape[0]
+
+        if indices is not None and indices.data is not None:
+            idx = np.asarray(indices.data, dtype=np.int64).flatten()
+            num_tris = len(idx) // 3
+            tris = idx[: num_tris * 3].reshape(-1, 3)
+        else:
+            num_tris = num_vertices // 3
+            tris = np.arange(num_tris * 3, dtype=np.int64).reshape(-1, 3)
+
+        normals = np.zeros((num_vertices, 3), dtype=np.float32)
+
+        if num_tris > 0:
+            v0 = pos[tris[:, 0]]
+            v1 = pos[tris[:, 1]]
+            v2 = pos[tris[:, 2]]
+
+            e1 = v1 - v0
+            e2 = v2 - v0
+            face_normals = np.cross(e1, e2)
+
+            np.add.at(normals, tris[:, 0], face_normals)
+            np.add.at(normals, tris[:, 1], face_normals)
+            np.add.at(normals, tris[:, 2], face_normals)
+
+        lengths = np.linalg.norm(normals, axis=1, keepdims=True)
+        mask = (lengths > 1e-8).squeeze()
+
+        normals[mask] /= lengths[mask]
+        normals[~mask] = np.array([0.0, 1.0, 0.0], dtype=np.float32)
+
+        return BufferData(
+            "VEC3",
+            "FLOAT",
+            num_vertices,
+            normals
+
+        )
+    @classmethod
     def _get_mesh(cls, node: GLBNode | NodeData, content: GLTF2) -> MeshData:
         mesh = content.meshes[node.mesh or 0]
         primitives: list[PrimitiveData] = []
@@ -573,6 +617,8 @@ class ImportManager:
 
             positions = cls._access_data(pos_id, content) # type: ignore
             normals = cls._access_data(primitive.attributes.NORMAL, content) # type: ignore
+            if normals is None or normals.data is None or len(normals.data) == 0:
+                normals = cls._compute_normals(positions, cls._access_data(primitive.indices, content))
             tangents = cls._access_data(primitive.attributes.TANGENT, content) # type: ignore
             textures_0 = cls._access_data(primitive.attributes.TEXCOORD_0, content) # type: ignore
             textures_1 = cls._access_data(primitive.attributes.TEXCOORD_1, content) # type: ignore

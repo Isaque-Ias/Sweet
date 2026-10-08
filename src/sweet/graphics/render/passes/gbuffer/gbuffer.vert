@@ -5,7 +5,11 @@ layout(std430, binding = 1) readonly buffer sw_Normals   { float normals[]; };
 layout(std430, binding = 2) readonly buffer sw_UVs       { float uvs[]; };
 layout(std430, binding = 3) readonly buffer sw_Indices   { uint indices[]; };
 
-struct Range { uint offset; uint count; };
+struct Range { 
+    uint offset; 
+    uint count; 
+};
+
 struct RenderObject {
     mat4 model;
     Range positions;
@@ -33,25 +37,43 @@ void main()
     RenderObject object = objects[gl_InstanceID];
     uint local_index = uint(gl_VertexID);
 
-    if (local_index >= object.indices.count) {
+    // 1. Determine vertex index (Supports both Indexed & Non-Indexed meshes)
+    uint vertex_index;
+    if (object.indices.count > 0) {
+        if (local_index >= object.indices.count) {
+            gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
+            return;
+        }
+        vertex_index = indices[object.indices.offset + local_index];
+    } else {
+        vertex_index = local_index;
+    }
+
+    // 2. Positions (Required)
+    if (vertex_index >= object.positions.count) {
         gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
         return;
     }
-
-    uint idx_location = object.indices.offset + local_index;
-    uint vertex_index = indices[idx_location];
-
     uint pos_base = object.positions.offset + (vertex_index * 3);
     vec3 local_pos = vec3(positions[pos_base], positions[pos_base + 1], positions[pos_base + 2]);
 
-    uint norm_base = object.normals.offset + (vertex_index * 3);
-    vec3 local_norm = vec3(normals[norm_base], normals[norm_base + 1], normals[norm_base + 2]);
+    // 3. Normals (Optional)
+    vec3 local_norm = vec3(0.0, 1.0, 0.0); // Fallback normal
+    if (object.normals.count > 0 && vertex_index < object.normals.count) {
+        uint norm_base = object.normals.offset + (vertex_index * 3);
+        local_norm = vec3(normals[norm_base], normals[norm_base + 1], normals[norm_base + 2]);
+    }
 
-    uint uv_base = object.uvs.offset + (vertex_index * 2);
-    vec2 local_uv = vec2(uvs[uv_base], uvs[uv_base + 1]);
+    // 4. UVs (Optional)
+    vec2 local_uv = vec2(0.0); // Fallback UV
+    if (object.uvs.count > 0 && vertex_index < object.uvs.count) {
+        uint uv_base = object.uvs.offset + (vertex_index * 2);
+        local_uv = vec2(uvs[uv_base], uvs[uv_base + 1]);
+    }
 
+    // 5. Output Transformations
     vec4 world_pos = object.model * vec4(local_pos, 1.0);
-    vec4 view_pos = sw_View * world_pos; // View Space Transformation
+    vec4 view_pos = sw_View * world_pos;
 
     v_world_position = world_pos.xyz;
     v_view_position = view_pos;

@@ -2,6 +2,7 @@ from chunk import generate_terrain
 import math
 import sweet as sw
 from sweet.core.linalg.vector import Vec3
+from sweet.core.linalg.rotation import EulerAngleXYZ
 
 sw.Engine.initialize(
     graphics_device=sw.GraphicsDevice.MODERNGL,
@@ -12,17 +13,24 @@ win1 = sw.Engine.create_window()
 win1.initialize(width=1366, height=768, title="Window 1")
 # win1.fullscreen = True
 
-assetsm1 = sw.Assets.load_scene(r"temp\russo\pbr_sphere.glb")
+assetsm1 = sw.Assets.load_scene(r"temp\russo\parkour.glb")
+# assetsm1 = sw.Assets.load_model(r"temp\russo\pbr_sphere.glb")
 scene = assetsm1[1]
 
 material = list(assetsm1[0].materials.values())[0]
-sw.graphics.upload.UploadManager.update_material_factors(material, clearcoat_factor=0)
+sw.graphics.upload.UploadManager.update_material_factors(material, metallic=0, roughness=1, specular_factor=0, clearcoat_factor=0, clearcoat_roughness_factor=0)
+mesh = scene.entities[0].children[0]
+
+mesh.position = Vec3(-10, -10, -10)
+mesh.rotation = EulerAngleXYZ(3.141592 * 3 / 2, 0, 0)
+mesh.scale = Vec3(.1, .1, .1)
+print(mesh, mesh.position, mesh.rotation, mesh.scale, mesh.children)
 
 ent = sw.Entity("aa")
 mat = sw.PBRMaterial("matt")
 mat.base_color_factor = [0, 0, 0, 1]
 mat.clearcoat_factor = 0
-mat.emissive_factor = [1000, 1000, 1000]
+mat.emissive_factor = [0, 0, 0]
 mat.metallic_factor = 0
 mat.roughness_factor = 1
 mat.specular_factor = 0
@@ -31,7 +39,7 @@ mat.upload()
 visual = sw.Visual(list(assetsm1[0].meshes.values())[0][0], mat.source_material)
 ent.attach_visual(visual)
 ent.position = Vec3(1, 0, 0)
-scene.add_entity(ent)
+# scene.add_entity(ent)
 
 # generate_terrain(scene, material)
 
@@ -46,39 +54,51 @@ class Player(sw.GameModel):
         self.render.set_scene(scene)
         self.render.activate()
 
-        self.cam_rot = sw.core.linalg.rotation.EulerAngleXYZ()
+        self.cam_rot = sw.core.linalg.rotation.QuaternionAngle()
 
         self.win = win
         self.speed = 0.1
         self.k = 6
         self.acc = self.speed
 
-    def main(self):
+    def move_towards(self, vec, dir, dist):
+        return vec + self.angle_to_vector(dir) * dist
 
+    def angle_to_vector(self, dir):
+        return Vec3(
+            -math.sin(dir.y),
+            0,
+            -math.cos(dir.y),
+        )
+
+    def rotate_vector_left(self, vec, angle):
+        cos_angle = math.cos(angle)
+        sin_angle = math.sin(angle)
+        return Vec3(
+            vec.x * cos_angle - vec.z * sin_angle,
+            vec.y,
+            vec.x * sin_angle + vec.z * cos_angle,
+        )
+
+    def main(self):
         if self.win.input.is_key_held(sw.Key.W):
-            self.node.position = Vec3(
-                self.node.position.x - self.speed * math.sin(self.cam_rot.y),
-                self.node.position.y,
-                self.node.position.z - self.speed * math.cos(self.cam_rot.y),
-            )
+            direc = self.cam_rot.get_forward()
+            direc.y = 0
+            self.node.position = self.node.position + direc * self.speed
         if self.win.input.is_key_held(sw.Key.S):
-            self.node.position = Vec3(
-                self.node.position.x + self.speed * math.sin(self.cam_rot.y),
-                self.node.position.y,
-                self.node.position.z + self.speed * math.cos(self.cam_rot.y),
-            )
+            direc = -self.cam_rot.get_forward()
+            direc.y = 0
+            self.node.position = self.node.position + direc * self.speed
+
         if self.win.input.is_key_held(sw.Key.A):
-            self.node.position = Vec3(
-                self.node.position.x - self.speed * math.cos(self.cam_rot.y),
-                self.node.position.y,
-                self.node.position.z + self.speed * math.sin(self.cam_rot.y),
-            )
+            direc = -self.cam_rot.get_right()
+            direc.y = 0
+            self.node.position = self.node.position + direc * self.speed
+
         if self.win.input.is_key_held(sw.Key.D):
-            self.node.position = Vec3(
-                self.node.position.x + self.speed * math.cos(self.cam_rot.y),
-                self.node.position.y,
-                self.node.position.z - self.speed * math.sin(self.cam_rot.y),
-            )
+            direc = self.cam_rot.get_right()
+            direc.y = 0
+            self.node.position = self.node.position + direc * self.speed
 
         if self.win.input.is_key_held(sw.Key.F):
             self.k += 0.01
@@ -104,9 +124,8 @@ class Player(sw.GameModel):
 
         self.camera.position = self.node.position
 
-        self.cam_rot.x += self.win.input.get_mouse_delta()[1] * 3.1415 / 180
-        self.cam_rot.x = min(max(self.cam_rot.x, -3.1415 / 2), 3.1415 / 2)
-        self.cam_rot.y += self.win.input.get_mouse_delta()[0] * 3.1415 / 180
+        self.cam_rot.rotate_vertical(self.win.input.get_mouse_delta()[1])
+        self.cam_rot.rotate_horizontal(self.win.input.get_mouse_delta()[0])
 
         self.camera.rotation = self.cam_rot
 
