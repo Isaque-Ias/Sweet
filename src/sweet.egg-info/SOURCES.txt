@@ -83,6 +83,7 @@ src/sweet/plataform/network/sockets.py
 src/sweet/resources/__init__.py
 src/sweet/resources/common.py
 src/sweet/resources/assets/__init__.py
+src/sweet/resources/assets/generation.py
 src/sweet/resources/assets/import_data.py
 src/sweet/resources/assets/importer.py
 src/sweet/resources/assets/importer.pyi

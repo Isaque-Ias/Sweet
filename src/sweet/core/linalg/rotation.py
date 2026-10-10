@@ -1,6 +1,6 @@
 from enum import Enum, auto
 from .vector import Vec3, Vec4
-from typing import Any, overload, Sequence
+from typing import Any, Self, overload, Sequence
 import math
 from abc import ABC, abstractmethod
 
@@ -35,6 +35,105 @@ class QuaternionAngle(Vec4, Rotation):
         super().__init__(*args)
         if len(args) == 0:
             self.scalars = [0.0, 0.0, 0.0, 1.0]
+
+    @classmethod
+    def from_axis_angle(cls, axis: Sequence[float], angle: float, radians: bool = True) -> "QuaternionAngle":
+        """Creates a quaternion from a 3D vector axis and an angle."""
+        if not radians:
+            angle = math.radians(angle)
+
+        ax, ay, az = axis
+        length = math.sqrt(ax * ax + ay * ay + az * az)
+        if length < 1e-8:
+            return cls(0.0, 0.0, 0.0, 1.0)
+
+        half_angle = angle * 0.5
+        sin_half = math.sin(half_angle)
+        scale = sin_half / length
+
+        q = cls(ax * scale, ay * scale, az * scale, math.cos(half_angle))
+        return q
+
+    def normalize(self) -> Self:
+        """Normalizes the quaternion in-place and returns self."""
+        x, y, z, w = self.scalars
+        length = math.sqrt(x * x + y * y + z * z + w * w)
+        if length > 1e-8:
+            self.scalars = [x / length, y / length, z / length, w / length]
+        else:
+            self.scalars = [0.0, 0.0, 0.0, 1.0]
+        return self
+
+    def get_forward(self) -> tuple[float, float, float]:
+        x, y, z, w = self.scalars
+        fx = -2.0 * (x * z + w * y)
+        fy = -2.0 * (y * z - w * x)
+        fz = -1.0 + 2.0 * (x * x + y * y)
+        return Vec3(fx, fy, fz)
+
+    def get_up(self) -> tuple[float, float, float]:
+        x, y, z, w = self.scalars
+        ux = 2.0 * (x * y - w * z)
+        uy = 1.0 - 2.0 * (x * x + z * z)
+        uz = 2.0 * (y * z + w * x)
+        return Vec3(ux, uy, uz)
+
+    def get_right(self) -> tuple[float, float, float]:
+        x, y, z, w = self.scalars
+        rx = 1.0 - 2.0 * (y * y + z * z)
+        ry = 2.0 * (x * y + w * z)
+        rz = 2.0 * (x * z - w * y)
+        return Vec3(rx, ry, rz)
+
+    def __mul__(self, other: "QuaternionAngle") -> "QuaternionAngle":
+        """Hamilton product (q1 * q2) for applying local rotations."""
+        x1, y1, z1, w1 = self.scalars
+        x2, y2, z2, w2 = other.scalars
+
+        x = w1 * x2 + x1 * w2 + y1 * z2 - z1 * y2
+        y = w1 * y2 - x1 * z2 + y1 * w2 + z1 * x2
+        z = w1 * z2 + x1 * y2 - y1 * x2 + z1 * w2
+        w = w1 * w2 - x1 * x2 - y1 * y2 - z1 * z2
+
+        res = QuaternionAngle(x, y, z, w)
+        return res.normalize()
+
+    def rotate_pitch(self, angle: float, radians: bool = True) -> Self:
+        """Rotates around local Right axis (X-axis). Positive pitch looks UP."""
+        q_pitch = QuaternionAngle.from_axis_angle((1.0, 0.0, 0.0), angle, radians=radians)
+        
+        new_q = self * q_pitch
+        self.scalars = new_q.scalars
+        return self
+
+    def rotate_yaw(
+        self, 
+        angle: float, 
+        fixed: bool = True, 
+        world_up: Sequence[float] = (0.0, 1.0, 0.0), 
+        radians: bool = True
+    ) -> Self:
+        if fixed:
+            q_yaw = QuaternionAngle.from_axis_angle(world_up, angle, radians=radians)
+            new_q = q_yaw * self
+        else:
+            q_yaw = QuaternionAngle.from_axis_angle((0.0, 1.0, 0.0), angle, radians=radians)
+            new_q = self * q_yaw
+
+        self.scalars = new_q.scalars
+        return self
+
+    def rotate_vertical(self, angle: float, radians: bool = False) -> Self:
+        return self.rotate_pitch(angle, radians=radians)
+
+    def rotate_horizontal(
+        self, 
+        angle: float, 
+        fixed: bool = True, 
+        world_up: Sequence[float] = (0.0, 1.0, 0.0), 
+        radians: bool = False
+    ) -> Self:
+        return self.rotate_yaw(angle, fixed=fixed, world_up=world_up, radians=radians)
 
     def to_vector(self):
         x, y, z, w = self.scalars
