@@ -1,4 +1,4 @@
-from chunk import generate_terrain
+from chunk import *
 import math
 import sweet as sw
 from sweet.core.linalg.vector import Vec3
@@ -26,22 +26,34 @@ mesh.rotation = EulerAngleXYZ(3.141592 * 3 / 2, 0, 0)
 mesh.scale = Vec3(.1, .1, .1)
 print(mesh, mesh.position, mesh.rotation, mesh.scale, mesh.children)
 
-ent = sw.Entity("aa")
 mat = sw.PBRMaterial("matt")
-mat.base_color_factor = [0, 0, 0, 1]
-mat.clearcoat_factor = 0
+mat.base_color_factor = [1, 1, 1, 1]
+mat.clearcoat_factor = 1
 mat.emissive_factor = [0, 0, 0]
 mat.metallic_factor = 0
 mat.roughness_factor = 1
 mat.specular_factor = 0
 mat.clearcoat_roughness_factor = 0
 mat.upload()
+
+mat2 = sw.PBRMaterial("matt2")
+mat2.base_color_factor = [0.96 * .2, 0.94 * .2, 0.86 * .2, 1]
+mat2.clearcoat_factor = 0
+mat2.emissive_factor = [0, 0, 0]
+mat2.metallic_factor = 0
+mat2.roughness_factor = 1
+mat2.specular_factor = 0
+mat2.clearcoat_roughness_factor = 1
+mat2.upload()
+
 visual = sw.Visual(list(assetsm1[0].meshes.values())[0][0], mat.source_material)
+
+ent = sw.Entity("aa")
 ent.attach_visual(visual)
 ent.position = Vec3(1, 0, 0)
 # scene.add_entity(ent)
 
-# generate_terrain(scene, material)
+generate_procedural_eye(scene, mat.source_material, mat2.source_material)
 
 class Player(sw.GameModel):
     def __init__(self, win: sw.WindowSurface):
@@ -57,7 +69,7 @@ class Player(sw.GameModel):
         self.cam_rot = sw.core.linalg.rotation.QuaternionAngle()
 
         self.win = win
-        self.speed = 0.1
+        self.speed = 0.5
         self.k = 6
         self.acc = self.speed
 
@@ -180,22 +192,22 @@ volume_data = [
     # },
     
     # Volume 1: Box-bounded Fog (e.g., localized smoke in a room)
-    # {
-    #     "type": 1,                             # VOLUME_TYPE_BOX
-    #     "inv_transform": make_inv_transform(
-    #         position=(0.0, 15.0, 0.0), 
-    #         scale=(40.0, 10.0, 40.0)          # Large sky volume
-    #     ),
-    #     "color": (0.95, 0.95, 1.0, 4.0),      # Dense white/blue tint
-    #     "phase_g": 0.5,                       # Strong forward rim lighting
-    #     "absorption": 0.05,
-    #     "cloud_params": (
-    #         0.05,                             # detail_scale: controls wisp size
-    #         0.2,                              # anim_speed: drift velocity
-    #         0.15,                             # soft_edge: feathering bound margin [0..0.5]
-    #         0.0
-    #     )
-    # }
+#     {
+#     "type": 1,  # VOLUME_TYPE_BOX
+#     "inv_transform": make_inv_transform(
+#         position=(0.0, 2.5, 0.0), 
+#         scale=(50.0, 50.0, 50.0)      # Compact 5x5x5 box
+#     ),
+#     "color": (0.95, 0.95, 1.0, 0.8),   # Lowered alpha from 4.0 -> 0.8 so it's translucent, not a solid block
+#     "phase_g": 0.4,                    
+#     "absorption": 0.1,                 
+#     "cloud_params": (
+#         1.5,   # detail_scale: keeps features large enough to look like a cloud inside 5 units
+#         0.2,   # anim_speed
+#         0.25,  # soft_edge: broader feathering so close-up views don't show flat sides
+#         0.0
+#     )
+# }
     # Volume 2: Spherical Fog (e.g., localized magical orb or aura)
     # {
     #     "type": 2,                             # VOLUME_TYPE_SPHERE

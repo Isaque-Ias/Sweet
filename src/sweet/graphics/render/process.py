@@ -573,100 +573,73 @@ class PipelineManager:
         cls._imported_resources[name] = res
 
     @staticmethod
-    def generate_perlin_worley_3d(size: int = 64) -> np.ndarray:
-        """Vectorized, tileable Perlin-Worley 3D noise generator.
-
-        OPT: the previous implementation was a quadruple-nested pure
-        Python loop (grid z/y/x, plus a 3x3x3 neighbor-cell scan per
-        voxel, plus a per-voxel np.linalg.norm call) -- for size=64 that
-        is on the order of hundreds of millions of Python-level
-        operations, which is presumably why every call site pins
-        size=1 (this function was effectively dead code). This version
-        vectorizes the neighbor scan and distance computation with NumPy
-        broadcasting: it still loops over the 27 periodic-tile offsets in
-        Python, but each iteration operates on the entire grid against
-        all feature points at once.
-
-        This also fixes two correctness bugs present in the original
-        that would have produced incorrect noise even if it had been run
-        at a real resolution:
-          - feature points were sampled as raw [0, 1) randoms and never
-            actually translated into their own cell's position, so they
-            weren't distributed across the volume at all;
-          - the per-voxel distance computation used the X coordinate
-            twice (`fx - cx` appears twice) instead of using Z.
-        Since the function was never actually exercised at size > 1,
-        preserving those bugs verbatim would just be reproducing dead,
-        incorrect code -- this reimplements the intended tileable Worley
-        noise instead.
-        """
-        num_cells = 4
+    def generate_perlin_worley_3d(size: int = 64, detail_level: int = 4, noise_proportion: float = 0.6) -> np.ndarray:
+        """Vectorized, tileable Perlin-Worley 3D noise generator with true multi-frequency channels."""
         rng = np.random.default_rng(42)
 
-        # Each feature point's position within its own cell, in [0, 1).
-        local_offsets = rng.random((num_cells, num_cells, num_cells, 3)).astype(np.float32)
-        cz, cy, cx = np.meshgrid(
-            np.arange(num_cells), np.arange(num_cells), np.arange(num_cells), indexing="ij"
-        )
-        cell_index = np.stack([cx, cy, cz], axis=-1).astype(np.float32)  # (nc, nc, nc, 3), order (x, y, z)
+        def compute_worley(nc: int) -> np.ndarray:
+            """Helper to compute tileable Worley noise for a given cell count (nc)."""
+            local_offsets = rng.random((nc, nc, nc, 3)).astype(np.float32)
+            cz, cy, cx = np.meshgrid(np.arange(nc), np.arange(nc), np.arange(nc), indexing="ij")
+            cell_index = np.stack([cx, cy, cz], axis=-1).astype(np.float32)
+            feature_points = (cell_index + local_offsets).reshape(-1, 3)
 
-        # Feature points' global position in cell-space [0, num_cells).
-        feature_points = (cell_index + local_offsets).reshape(-1, 3)  # (num_cells^3, 3)
+            coords = (np.arange(size, dtype=np.float32) / size) * nc
+            gz, gy, gx = np.meshgrid(coords, coords, coords, indexing="ij")
+            grid_x, grid_y, grid_z = gx.reshape(-1, 1), gy.reshape(-1, 1), gz.reshape(-1, 1)
 
-        # Grid sample positions, also in cell-space [0, num_cells).
-        coords = (np.arange(size, dtype=np.float32) / size) * num_cells
-        gz, gy, gx = np.meshgrid(coords, coords, coords, indexing="ij")
-        grid_x = gx.reshape(-1, 1)  # (size^3, 1)
-        grid_y = gy.reshape(-1, 1)
-        grid_z = gz.reshape(-1, 1)
+            min_dist_sq = np.full(grid_x.shape[0], np.inf, dtype=np.float32)
+            fpx, fpy, fpz = feature_points[:, 0][None, :], feature_points[:, 1][None, :], feature_points[:, 2][None, :]
 
-        min_dist_sq = np.full(grid_x.shape[0], np.inf, dtype=np.float32)
+            for dz in (-1, 0, 1):
+                shift_z = dz * nc
+                for dy in (-1, 0, 1):
+                    shift_y = dy * nc
+                    for dx in (-1, 0, 1):
+                        shift_x = dx * nc
+                        dxs = grid_x - (fpx + shift_x)
+                        dys = grid_y - (fpy + shift_y)
+                        dzs = grid_z - (fpz + shift_z)
+                        dist_sq = dxs * dxs + dys * dys + dzs * dzs
+                        min_dist_sq = np.minimum(min_dist_sq, dist_sq.min(axis=1))
 
-        # Tileable Worley noise: check every feature point against every
-        # periodic image of the domain (27 whole-domain shifts) so the
-        # noise wraps seamlessly at the volume's edges.
-        fpx = feature_points[:, 0][None, :]
-        fpy = feature_points[:, 1][None, :]
-        fpz = feature_points[:, 2][None, :]
+            return (1.0 - np.clip(np.sqrt(min_dist_sq), 0.0, 1.0)).reshape(size, size, size)
 
-        for dz in (-1, 0, 1):
-            shift_z = dz * num_cells
-            for dy in (-1, 0, 1):
-                shift_y = dy * num_cells
-                for dx in (-1, 0, 1):
-                    shift_x = dx * num_cells
-                    dxs = grid_x - (fpx + shift_x)
-                    dys = grid_y - (fpy + shift_y)
-                    dzs = grid_z - (fpz + shift_z)
-                    dist_sq = dxs * dxs + dys * dys + dzs * dzs  # (size^3, num_cells^3)
-                    min_dist_sq = np.minimum(min_dist_sq, dist_sq.min(axis=1))
+        # 1. Low-frequency Worley for macro structures
+        macro_cells = max(detail_level, 1)
+        worley_macro = compute_worley(macro_cells)
 
-        worley_r = (1.0 - np.clip(np.sqrt(min_dist_sq), 0.0, 1.0)).reshape(size, size, size)
+        # 2. High-frequency Worley channels for true multi-scale erosion (G, B, A)
+        worley_detail1 = compute_worley(macro_cells * 2)
+        worley_detail2 = compute_worley(macro_cells * 4)
+        worley_detail3 = compute_worley(macro_cells * 8)
 
-        # Synthetic Perlin-like gradient base (already vectorized in the
-        # original -- kept as-is).
-        grid_x3 = gx
-        grid_y3 = gy
-        grid_z3 = gz
+        # 3. Synthetic Perlin-like gradient base
+        coords_p = (np.arange(size, dtype=np.float32) / size) * macro_cells
+        gz, gy, gx = np.meshgrid(coords_p, coords_p, coords_p, indexing="ij")
         perlin_base = (
-            np.sin(grid_x3 / num_cells * np.pi * 4)
-            * np.cos(grid_y3 / num_cells * np.pi * 4)
-            * np.sin(grid_z3 / num_cells * np.pi * 4)
+            np.sin(gx / macro_cells * np.pi * 4)
+            * np.cos(gy / macro_cells * np.pi * 4)
+            * np.sin(gz / macro_cells * np.pi * 4)
         )
         perlin_base = (perlin_base + 1.0) * 0.5
 
-        r_channel = np.clip(perlin_base * worley_r, 0.0, 1.0)
-        g_channel = np.roll(worley_r, shift=8, axis=0)
-        b_channel = np.roll(worley_r, shift=16, axis=1)
-        a_channel = np.roll(worley_r, shift=24, axis=2)
+        # 4. Assemble Channels
+        # R Channel: Combined Perlin & Macro Worley (Base Shape)
+        r_channel = np.clip((1.0 - noise_proportion) * perlin_base + noise_proportion * worley_macro, 0.0, 1.0)
+        
+        # G, B, A Channels: Independent high-frequency noise for organic erosion
+        g_channel = worley_detail1
+        b_channel = worley_detail2
+        a_channel = worley_detail3
 
         texture_data = np.stack([r_channel, g_channel, b_channel, a_channel], axis=-1)
         return (texture_data * 255).astype(np.uint8)
 
     @classmethod
-    def create_cloud_texture_3d(cls, size=64) -> moderngl.Texture3D:
+    def create_cloud_texture_3d(cls, size: int = 64, detail_level: int = 4, noise_proportion: float = 0.6) -> moderngl.Texture3D:
         ctx = cls.gfx_device.ctx
-        data = cls.generate_perlin_worley_3d(size)
+        data = cls.generate_perlin_worley_3d(size, detail_level, noise_proportion)
         texture = ctx.texture3d((size, size, size), 4, data.tobytes())
 
         texture.filter = (moderngl.LINEAR, moderngl.LINEAR)
@@ -736,7 +709,7 @@ class PipelineManager:
         ntex = cls.gfx_device.create_texture2d(1, 1, 3)
         ntex.upload_pixels(b'\xff\xff\xff', 0, 0, 1, 1)
 
-        tex = cls.create_cloud_texture_3d(size=1)
+        tex = cls.create_cloud_texture_3d(size=16, detail_level=2, noise_proportion=0.5)
         cls._imported_resources["u_CloudNoise3D"] = tex
 
         cls._load_graph(Deferred())
@@ -1062,6 +1035,9 @@ class PipelineManager:
                     cmd.set_resource_set(set_index=0, resource_set=render_pass.resource_set)
 
                     render_pass.config.render_func(cmd, vdata)
+
+                    # if render_pass.name in ["GBufferPass"]:
+                    #     cmd.save_image("a")
 
                     if pass_idx + 1 == total_passes:
                         dest_target = vdata.target if vdata.win_surface is None else vdata.win_surface.render_target
