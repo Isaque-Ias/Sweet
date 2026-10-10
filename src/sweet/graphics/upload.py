@@ -240,7 +240,7 @@ class UploadManager:
     @classmethod
     def initialize(cls, graphics_device: GraphicsDevice):
         cls._gfx_device = graphics_device
-        base_size_mb = 32
+        base_size_mb = 128
         cls._interleaved_buffers = {
             "positions": GPUMemoryTracker(cls._gfx_device.create_bindless_storage_buffer(base_size_mb)),
             "normals": GPUMemoryTracker(cls._gfx_device.create_bindless_storage_buffer(base_size_mb)),

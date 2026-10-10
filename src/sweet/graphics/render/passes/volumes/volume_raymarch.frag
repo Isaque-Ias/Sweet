@@ -41,6 +41,11 @@ layout(std430, binding = 7) readonly buffer sw_Volumes {
     VolumeObject volumes[];
 };
 
+
+float remap(float value, float original_min, float original_max, float new_min, float new_max) {
+    return new_min + (((value - original_min) / (original_max - original_min)) * (new_max - new_min));
+}
+
 // --- Cloud Height Gradient Profile ---
 // Shapes volume vertically: zero at bottom, dense in middle, tapering at top
 float GetCloudHeightSignal(float normalizedY) {
@@ -48,7 +53,6 @@ float GetCloudHeightSignal(float normalizedY) {
     return smoothstep(0.0, 0.2, normalizedY) * (1.0 - smoothstep(0.7, 1.0, normalizedY));
 }
 
-// Evaluate Density using 3D Texture
 float SampleVolumeDensity(VolumeObject vol, vec3 worldPos) {
     if (vol.type != VOLUME_TYPE_BOX) return 0.0;
 
@@ -70,22 +74,22 @@ float SampleVolumeDensity(VolumeObject vol, vec3 worldPos) {
     // 2. Vertical Cloud Profile
     float heightSignal = GetCloudHeightSignal(boxUV.y);
 
-    // 3. Sample 3D Noise
-    float detailScale = max(vol.cloud_params.x, 0.001); // Guard against divide/multiply by 0
+    // 3. Sample 3D Noise using Box-Local Tiling
+    float detailScale = max(vol.cloud_params.x, 0.001); 
     float animSpeed = vol.cloud_params.y;
 
-    // Option A: World-Space Tiling (for large, seamless cloudscapes)
-    vec3 uvw = worldPos * detailScale + vec3(sw_Time * animSpeed * 0.05, sw_Time * animSpeed * 0.01, 0.0);
-    
-    // Option B: Box-Local Tiling (stretches with the box size)
-    // vec3 uvw = boxUV * detailScale + vec3(sw_Time * animSpeed * 0.05, 0.0, 0.0);
-
+    vec3 uvw = boxUV * detailScale + vec3(sw_Time * animSpeed * 0.05, 0.0, 0.0);
     vec4 noiseSample = texture(u_CloudNoise3D, uvw);
     
     float baseNoise = noiseSample.r * 0.6 + noiseSample.g * 0.4;
     float highFreqErosion = noiseSample.b * 0.3 + noiseSample.a * 0.2;
-    
-    float finalCloudShape = smoothstep(1.0 - baseNoise, 1.0, heightSignal - highFreqErosion);
+
+    // --- Safe & Smooth Density Shaping ---
+    float cloudCoverage = 0.15; // Start low so clouds are visible
+    float baseCloud = baseNoise * heightSignal;
+
+    // Use smoothstep instead of a hard 'if' statement to fade clouds in organically
+    float finalCloudShape = smoothstep(cloudCoverage, cloudCoverage + 0.3, baseCloud - highFreqErosion * 0.3);
 
     return vol.color.a * finalCloudShape * edgeFactor;
 }
@@ -115,6 +119,25 @@ vec3 ReconstructWorldPos(vec2 uv, float depth) {
     return (sw_InvView * viewPos).xyz;
 }
 
+// Simple Ray-Box Intersection to find entry (tNear) and exit (tFar) distances
+bool RayBoxIntersection(vec3 rayStart, vec3 rayDir, mat4 invTransform, out float tNear, out float tFar) {
+    // Transform ray into local box space [-1, 1]
+    vec3 localOrigin = (invTransform * vec4(rayStart, 1.0)).xyz;
+    vec3 localDir = mat3(invTransform) * rayDir;
+
+    vec3 invDir = 1.0 / localDir;
+    vec3 t0 = (-1.0 - localOrigin) * invDir;
+    vec3 t1 = (1.0 - localOrigin) * invDir;
+
+    vec3 tmin = min(t0, t1);
+    vec3 tmax = max(t0, t1);
+
+    tNear = max(max(tmin.x, tmin.y), tmin.z);
+    tFar = min(min(tmax.x, tmax.y), tmax.z);
+
+    return tFar >= tNear && tFar > 0.0;
+}
+
 void main() {
     vec3 sceneColor = texture(u_SceneColor, v_uv).rgb;
     float depth = texture(u_DepthTexture, v_uv).r;
@@ -125,24 +148,33 @@ void main() {
     float rayLength = length(rayVec);
     vec3 rayDir = rayVec / rayLength;
 
-    const int NUM_STEPS = 48;
-    float stepSize = rayLength / float(NUM_STEPS);
-
-    // Screen-Space Interleaved Dithering to hide step artifacts
-    float dither = fract(sin(dot(gl_FragCoord.xy, vec2(12.9898, 78.233))) * 43758.5453);
-    float currentT = stepSize * dither;
-
     float transmittance = 1.0;
     vec3 accumulatedInscattering = vec3(0.0);
     float cosTheta = dot(rayDir, sw_LightDirection);
 
-    for (int i = 0; i < NUM_STEPS; ++i) {
-        if (currentT >= rayLength || transmittance < 0.01) break;
+    // Loop through each volume object
+    for (uint v = 0u; v < u_VolumeCount; ++v) {
+        VolumeObject vol = volumes[v];
+        
+        float tNear, tFar;
+        if (!RayBoxIntersection(rayStart, rayDir, vol.inv_transform, tNear, tFar)) continue;
 
-        vec3 currentPos = rayStart + rayDir * currentT;
+        // Clamp intersection to screen depth / ray length
+        tNear = max(tNear, 0.0);
+        tFar = min(tFar, rayLength);
+        if (tNear >= tFar) continue;
 
-        for (uint v = 0u; v < u_VolumeCount; ++v) {
-            VolumeObject vol = volumes[v];
+        const int NUM_STEPS = 32;
+        float boxRayLength = tFar - tNear;
+        float stepSize = boxRayLength / float(NUM_STEPS);
+
+        float dither = fract(sin(dot(gl_FragCoord.xy, vec2(12.9898, 78.233))) * 43758.5453);
+        float currentT = tNear + stepSize * dither;
+
+        for (int i = 0; i < NUM_STEPS; ++i) {
+            if (currentT >= tFar || transmittance < 0.01) break;
+
+            vec3 currentPos = rayStart + rayDir * currentT;
             float density = SampleVolumeDensity(vol, currentPos);
 
             if (density > 0.001) {
@@ -158,9 +190,9 @@ void main() {
                 accumulatedInscattering += transmittance * stepInscattering;
                 transmittance *= stepTransmittance;
             }
-        }
 
-        currentT += stepSize;
+            currentT += stepSize;
+        }
     }
 
     vec3 finalColor = sceneColor * transmittance + accumulatedInscattering;

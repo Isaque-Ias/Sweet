@@ -15,6 +15,7 @@ uniform sampler2D Light_ORM;
 uniform sampler2D Light_Emissive;   // RGB = emissive color
 uniform sampler2D Light_ClearCoat;  // RGB = clearcoat intensity, A = clearcoat roughness
 uniform sampler2D Light_Specular;   // RGB = specular color tint, A = specular factor
+uniform sampler2D Light_Transmission; // R = transmission factor
 
 // --- Shadow map (single, no cascades) ---
 uniform sampler2D Light_ShadowMap;
@@ -41,6 +42,11 @@ uniform float sw_Albedo    = 1.0;   // scales the sampled albedo color
 // --- Clear coat ---
 uniform float sw_ClearCoat          = 0.0;  // multiplies ClearCoat intensity, 0 = layer disabled
 uniform float sw_ClearCoatRoughness = 1.0;  // multiplies ClearCoat roughness
+
+// --- Transmission ---
+uniform float sw_Transmission       = 0.0;  // multiplies transmission factor, 0 = disabled
+uniform vec3  sw_TransmissionColor  = vec3(1.0);
+uniform float sw_Ior                = 0.0;  // Index of Refraction (e.g., 1.5 for glass)
 
 // --- Emissive ---
 uniform vec3  sw_EmissiveColor    = vec3(1.0);
@@ -185,10 +191,13 @@ void main()
 
     // --- 4. Read Clearcoat Map & Multipliers ---
     vec4 clearcoat_sample = texture(Light_ClearCoat, v_uv);
-    float clearcoat           = clamp(clearcoat_sample.r * sw_ClearCoat, 0.0, 1.0);
+    float clearcoat             = clamp(clearcoat_sample.r * sw_ClearCoat, 0.0, 1.0);
     float clearcoat_roughness = clamp(clearcoat_sample.a * sw_ClearCoatRoughness, 0.045, 1.0);
 
-    // --- 5. Geometry & Vectors ---
+    // --- 5. Read Transmission Map & Multipliers ---
+    float transmission = 0.0;//clamp(texture(Light_Transmission, v_uv).r * sw_Transmission, 0.0, 1.0);
+
+    // --- 6. Geometry & Vectors ---
     vec3 view_position = reconstruct_view_position(v_uv, depth);
     vec4 world_position4 = sw_InvView * vec4(view_position, 1.0);
     vec3 world_position = world_position4.xyz / world_position4.w;
@@ -204,39 +213,45 @@ void main()
 
     float shadow = shadow_factor(world_position, normal, L);
 
-    // --- 6. Base Layer Cook-Torrance Direct Lighting ---
+    // --- 7. Base Layer Cook-Torrance Direct Lighting ---
     float D = distribution_ggx(N, H, roughness);
     float G = geometry_smith(NdotV, NdotL, roughness);
     vec3 F  = fresnel_schlick(VdotH, F0);
 
     vec3 specular = (D * G * F) / max(4.0 * NdotV * NdotL, 1e-4);
-    vec3 kD = (vec3(1.0) - F) * (1.0 - metallic);
+    
+    // Energy conservation: Metals and Transmissive surfaces don't have standard diffuse
+    vec3 kD = (vec3(1.0) - F) * (1.0 - metallic) * (1.0 - transmission);
     vec3 diffuse = kD * albedo / PI;
 
-    // --- 7. Clearcoat Layer Direct Lighting ---
+    // --- 8. Clearcoat Layer Direct Lighting ---
     float Dc = distribution_ggx(N, H, clearcoat_roughness);
     float Gc = geometry_smith(NdotV, NdotL, clearcoat_roughness);
     vec3 Fc0 = vec3(0.04);
     vec3 Fc_raw = fresnel_schlick(VdotH, Fc0);
-    vec3 Fc = Fc_raw * clearcoat; // Scale coat reflection by strength
+    vec3 Fc = Fc_raw * clearcoat;
 
     vec3 clearcoat_specular = vec3((Dc * Gc) / max(4.0 * NdotV * NdotL, 1e-4)) * Fc;
-
-    // Base attenuation for energy conservation (what clearcoat reflects, base layer doesn't receive)
     vec3 base_attenuation = vec3(1.0) - Fc;
 
     vec3 direct = (diffuse + specular) * base_attenuation * sw_LightColor * NdotL * shadow
                 + clearcoat_specular * sw_LightColor * NdotL * shadow;
 
-    // --- 8. Ambient & Reflection ---
+    // --- 9. Ambient, Reflection & Transmission ---
     vec3 R = reflect(-V, N);
     vec3 reflection = sample_blurred_reflection(R, roughness);
-    vec3 reflection_term = reflection * F * base_attenuation;
+    vec3 reflection_term = reflection * F * base_attenuation * (1.0 - transmission);
 
     vec3 reflection_clearcoat = sample_blurred_reflection(R, clearcoat_roughness) * Fc;
 
-    vec3 ambient = albedo * sw_AmbientColor * ao * (1.0 - metallic) * base_attenuation;
+    vec3 ambient = albedo * sw_AmbientColor * ao * (1.0 - metallic) * (1.0 - transmission) * base_attenuation;
+
+    // Transmission Refraction Calculation
+    float eta = 1.0 / sw_Ior; // Air to material IOR ratio
+    vec3 R_trans = refract(-V, N, eta);
+    vec3 transmitted_env = sample_blurred_reflection(R_trans, roughness);
+    vec3 transmission_term = transmitted_env * albedo * sw_TransmissionColor * transmission * (1.0 - metallic);
 
     // --- Output Composite ---
-    Light_Out = vec4(ambient + direct + reflection_term + reflection_clearcoat + emissive, 1.0);
+    Light_Out = vec4(ambient + direct + reflection_term + reflection_clearcoat + transmission_term + emissive, 1.0);
 }

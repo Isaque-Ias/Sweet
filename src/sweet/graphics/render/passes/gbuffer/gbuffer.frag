@@ -117,5 +117,5 @@ void main()
     GBuffer_ORM       = vec4(occlusion, roughness, metalness, 1.0);
     GBuffer_Specular  = vec4(specularColor, specularFactor);
     GBuffer_Emissive  = vec4(emissive, 1.0);
-    GBuffer_Clearcoat = vec4(vec3(clearcoatFactor), clearcoatRoughnessFactor);
+    GBuffer_Clearcoat = vec4(vec3(1.0 + 0.0*clearcoatFactor), clearcoatRoughnessFactor);
 }
