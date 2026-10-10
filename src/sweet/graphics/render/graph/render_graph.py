@@ -1,0 +1,289 @@
+from sweet.graphics.upload import GPUShader
+from typing import Optional, NamedTuple, Any, Callable
+from ....resources.assets.importer import ImportManager
+from ...upload import UploadManager
+from pathlib import Path
+from collections import defaultdict, deque
+from enum import Enum, auto, IntEnum
+from dataclasses import dataclass, field
+
+class MipSelect(IntEnum):
+    BASE = 0
+    LOWEST = -1
+
+@dataclass(frozen=True)
+class SourceRef:
+    output: str
+    shader: Any
+    mip: int | MipSelect = MipSelect.BASE
+
+class RenderDomain(Enum):
+    SCREEN = auto()
+    SCENE = auto()
+    LIGHT = auto()
+    CASCADE = auto()
+    CAMERA = auto()
+    PROBE = auto()
+    CUBEMAP = auto()
+
+@dataclass
+class PassConfig:
+    hdr: bool = True                     # f2 (half-float) vs u1 (8-bit) attachments
+    depth_texture: bool = False          # expose depth as a sampleable attachment
+    cull_mode: str = "back"
+    depth_test: bool = True
+    depth_write: bool = True
+    depth_compare_op: str = "less_equal"
+    mip_levels: int = 1                  # 1 = no mip chain, 0 = full chain
+    shadow_cascades: int = 1             # >1 => CSM array target + per-cascade draws
+    ping_pong: bool = False              # e.g. bloom blur
+    ping_pong_iterations: int = 1
+    domain: RenderDomain = RenderDomain.SCENE
+    blend_enable: bool = False
+    render_func: Callable[..., Any] = field(default_factory=lambda cmd, vdata: cmd.draw(domain="view", vertex_count=3, instance_count=1)) # type: ignore
+    custom_pass_management: bool = False
+
+class Graph:
+    graph: "RenderGraph"
+    name: str = "Nameless"
+    @classmethod
+    def _file_to_node(cls, vertex: str | Path, fragment: str | Path, geometry: Optional[str | Path]=None):
+        shader_prog = ImportManager.load_shaders(vertex, fragment, geometry)
+        gpu_shader = UploadManager.upload_shaders(shader_prog)
+        return gpu_shader
+
+    @classmethod
+    def build(cls):
+        pass
+
+    @classmethod
+    def initialize(cls):
+        cls.graph.initialize()
+        
+class ResourceDesc(NamedTuple):
+    name: str
+    size_bytes: int
+    is_imported: bool = False
+
+class ResourceLifetime:
+    def __init__(self, desc: ResourceDesc):
+        self.desc = desc
+        self.first_pass: int = float("inf") # type: ignore
+        self.last_pass: int = -1
+        self.memory_offset: int = -1
+
+    def update_lifetime(self, pass_index: int) -> None:
+        self.first_pass = min(self.first_pass, pass_index)
+        self.last_pass = max(self.last_pass, pass_index)
+
+    def overlaps_with(self, other: "ResourceLifetime") -> bool:
+        return not (self.last_pass < other.first_pass or self.first_pass > other.last_pass)
+
+class RenderShader:
+    def __init__(self, name: str, program: Optional[GPUShader] = None, config: Optional[PassConfig] = None):
+        self.name: str = name
+        self.program: Optional[GPUShader] = program
+        self.inputs: set[str] = set()
+        self.outputs: set[str] = set()
+        self.dependencies: dict[str, tuple[str, "RenderShader", Any]] = {}
+        self._redirect: dict[str, tuple[str, "RenderShader"]] = {}
+        self.is_culled: bool = True
+        if config is None:
+            config = PassConfig()
+        self.config = config
+
+    def add_input(self, resource_name: str) -> "RenderShader":
+        self.inputs.add(resource_name)
+        return self
+
+    def add_output(self, resource_name: str) -> "RenderShader":
+        self.outputs.add(resource_name)
+        return self
+
+    def connect_input(
+        self, producer_output_res: str, producer_shader: "RenderShader", input_res: str, mip: Optional[MipSelect] = None
+    ) -> None:
+        self.inputs.add(input_res)
+        producer_shader.outputs.add(producer_output_res)
+        self.dependencies[producer_output_res] = (input_res, producer_shader, mip) # type: ignore
+
+    def resolve_redirections(self) -> None:
+        self._redirect.clear()
+        for input_res, (producer_attr, producer_shader, _) in self.dependencies.items(): # type: ignore
+            if not producer_shader.is_culled:
+                self._redirect[input_res] = (producer_attr, producer_shader)
+
+class MemoryPlanner:
+    @staticmethod
+    def plan_aliased_memory(
+        lifetimes: list[ResourceLifetime], alignment: int = 256
+    ) -> int:
+        transient_resources = [
+            r for r in lifetimes if not r.desc.is_imported and r.last_pass >= 0
+        ]
+        transient_resources.sort(key=lambda r: r.desc.size_bytes, reverse=True)
+
+        placed_resources: list[ResourceLifetime] = []
+        total_heap_size = 0
+
+        for res in transient_resources:
+            aligned_size = (res.desc.size_bytes + alignment - 1) & ~(alignment - 1)
+            candidate_offset = 0
+
+            while True:
+                conflict = False
+                for placed in placed_resources:
+                    placed_aligned_size = (
+                        placed.desc.size_bytes + alignment - 1
+                    ) & ~(alignment - 1)
+                    byte_overlap = not (
+                        candidate_offset + aligned_size <= placed.memory_offset
+                        or candidate_offset >= placed.memory_offset + placed_aligned_size
+                    )
+
+                    if byte_overlap and res.overlaps_with(placed):
+                        candidate_offset = placed.memory_offset + placed_aligned_size
+                        conflict = True
+                        break
+
+                if not conflict:
+                    break
+
+            res.memory_offset = candidate_offset
+            placed_resources.append(res)
+            total_heap_size = max(total_heap_size, candidate_offset + aligned_size)
+
+        return total_heap_size
+
+
+class RenderGraph:
+    def __init__(self):
+        self.shaders: list[RenderShader] = []
+        self.resource_descriptors: dict[str, ResourceDesc] = {}
+        self.graph_outputs: set[str] = set()
+        self.valid_resources: set[str] = set()
+        self.active_passes: list[RenderShader] = []
+        self.lifetimes: dict[str, ResourceLifetime] = {}
+        self.total_transient_heap_size: int = 0
+
+    def topological_sort(self, passes: Optional[list[RenderShader]] = None) -> list[RenderShader]:
+        target_passes = passes if passes is not None else (self.active_passes or self.shaders)
+        pass_set = set(target_passes)
+
+        resource_producers: dict[str, RenderShader] = {
+            res: shader for shader in pass_set for res in shader.outputs
+        }
+
+        in_degree: dict[RenderShader, int] = {shader: 0 for shader in pass_set}
+        adjacency: dict[RenderShader, set[RenderShader]] = defaultdict(set)
+
+        for consumer in pass_set:
+            for input_res in consumer.inputs:
+                producer = resource_producers.get(input_res)
+                if producer and producer in pass_set and producer != consumer:
+                    if consumer not in adjacency[producer]:
+                        adjacency[producer].add(consumer)
+                        in_degree[consumer] += 1
+
+        queue = deque([shader for shader in pass_set if in_degree[shader] == 0])
+        sorted_passes: list[RenderShader] = []
+
+        while queue:
+            node = queue.popleft()
+            sorted_passes.append(node)
+
+            for neighbor in adjacency[node]:
+                in_degree[neighbor] -= 1
+                if in_degree[neighbor] == 0:
+                    queue.append(neighbor)
+
+        if len(sorted_passes) != len(pass_set):
+            raise ValueError("Ciclo de dependência detectado em RenderGraph")
+
+        return sorted_passes
+
+    def register_resource(self, name: str, size_bytes: int = 0, is_imported: bool = False) -> None:
+        self.resource_descriptors[name] = ResourceDesc(name, size_bytes, is_imported)
+
+    def add_shader(self, shader: RenderShader) -> RenderShader:
+        if shader not in self.shaders:
+            self.shaders.append(shader)
+        return shader
+
+    def set_swapchain_target(self, resource_name: str) -> None:
+        self.graph_outputs.add(resource_name)
+
+    def initialize(self) -> None:
+        self.valid_resources.clear()
+        self.active_passes.clear()
+        self.lifetimes.clear()
+
+        for shader in self.shaders:
+            shader.is_culled = True
+            shader._redirect.clear() # type: ignore
+
+        resource_producers: dict[str, RenderShader] = {
+            out_res: shader for shader in self.shaders for out_res in shader.outputs
+        }
+
+        resources_to_process: list[str] = list(self.graph_outputs)
+        visited_resources: set[str] = set(resources_to_process)
+
+        while resources_to_process:
+            res = resources_to_process.pop()
+            self.valid_resources.add(res)
+
+            producer = resource_producers.get(res)
+            if producer is None:
+                continue
+
+            if producer.is_culled:
+                producer.is_culled = False
+                self.active_passes.append(producer)
+
+            for input_res in producer.inputs:
+                if input_res not in visited_resources:
+                    visited_resources.add(input_res)
+                    resources_to_process.append(input_res)
+
+        self.active_passes = self.topological_sort(self.active_passes)
+
+        for shader in self.active_passes:
+            shader.resolve_redirections()
+
+        for pass_idx, shader in enumerate(self.active_passes):
+            for out_res in shader.outputs:
+                if out_res in self.valid_resources:
+                    desc = self.resource_descriptors.get(
+                        out_res, ResourceDesc(out_res, size_bytes=1024 * 1024)
+                    )
+                    lifetime = self.lifetimes.setdefault(out_res, ResourceLifetime(desc))
+                    lifetime.update_lifetime(pass_idx)
+
+            for input_res in shader.inputs:
+                if input_res in self.valid_resources:
+                    desc = self.resource_descriptors.get(
+                        input_res, ResourceDesc(input_res, size_bytes=1024 * 1024)
+                    )
+                    lifetime = self.lifetimes.setdefault(
+                        input_res, ResourceLifetime(desc)
+                    )
+                    lifetime.update_lifetime(pass_idx)
+
+        self.total_transient_heap_size = MemoryPlanner.plan_aliased_memory(
+            list(self.lifetimes.values())
+        )
+
+    def get_initial_resource_map(self) -> dict[str, list[str]]:
+        produced_resources: set[str] = {
+            out_res for shader in self.active_passes for out_res in shader.outputs
+        }
+
+        initial_map: dict[str, list[str]] = {}
+
+        for shader in self.active_passes:
+            for input_res in shader.inputs:
+                if input_res not in produced_resources and input_res in self.valid_resources:
+                    initial_map.setdefault(input_res, []).append(shader.name)
+
+        return initial_map

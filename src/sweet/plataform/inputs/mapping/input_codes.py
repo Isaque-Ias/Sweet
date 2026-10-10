@@ -1,0 +1,52 @@
+from enum import Enum, auto
+
+class Key(Enum):
+    UNDEFINED = auto()
+    
+    A = auto()
+    B = auto()
+    C = auto()
+    D = auto()
+    E = auto()
+    F = auto()
+    G = auto()
+    H = auto()
+    I = auto()
+    J = auto()
+    K = auto()
+    L = auto()
+    M = auto()
+    N = auto()
+    O = auto()
+    P = auto()
+    Q = auto()
+    R = auto()
+    S = auto()
+    T = auto()
+    U = auto()
+    V = auto()
+    W = auto()
+    X = auto()
+    Y = auto()
+    Z = auto()
+
+    SPACE = auto()
+    LEFT_SHIFT = auto()
+    RIGHT_SHIFT = auto()
+    LEFT_CTRL = auto()
+    RIGHT_CTRL = auto()
+    ESCAPE = auto()
+    CAPS_LOCK = auto()
+
+class MouseButton(Enum):
+    UNDEFINED = auto()
+    LEFT = auto()
+    RIGHT = auto()
+    MIDDLE = auto()
+
+class GamepadButton(Enum):
+    UNDEFINED = auto()
+    A = auto()
+    B = auto()
+    X = auto()
+    Y = auto()

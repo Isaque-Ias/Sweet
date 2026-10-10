@@ -1,6 +1,6 @@
 import math
 import sweet as sw
-from sweet.vector import Vec3
+from sweet.core.linalg.vector import Vec3
 from sweet.inputting import Input
 
 

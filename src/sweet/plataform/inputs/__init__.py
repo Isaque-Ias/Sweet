@@ -1,0 +1,1 @@
+from . import window_input, periferic, mapping # type: ignore
